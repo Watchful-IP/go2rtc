@@ -96,6 +96,9 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 				buf = append(buf, data[3:]...)
 			}
 		} else if nuType == NALUTypeAP {
+			if fragmented {
+				reset()
+			}
 			// RFC 7798 §4.4.2 Aggregation Packet: [PayloadHdr][2-byte size + NALU]*
 			// (no DONL — sprop-max-don-diff=0). Emitted by libavformat's HEVC RTP
 			// packetizer (e.g. exec/ffmpeg sources), which bundles VPS+SPS+PPS into
@@ -103,13 +106,13 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 			// The AP already carries parameter sets in-band — don't prepend ps.
 			for i := 2; i < len(data); {
 				if i+2 > len(data) {
-					buf = buf[:0] // drop truncated AP (same convention as FU)
+					reset() // truncated AP: treat as loss, wait for a keyframe
 					return
 				}
 				size := int(binary.BigEndian.Uint16(data[i:]))
 				i += 2
 				if size < 2 || i+size > len(data) {
-					buf = buf[:0] // drop corrupted AP
+					reset() // corrupted AP
 					return
 				}
 				buf = binary.BigEndian.AppendUint32(buf, uint32(size)) // NAL unit size
