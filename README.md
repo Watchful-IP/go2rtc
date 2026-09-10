@@ -1,3 +1,5 @@
+> **Watchful fork.** Watchful-IP's maintained fork of [AlexxIT/go2rtc](https://github.com/AlexxIT/go2rtc). See [WATCHFUL.md](WATCHFUL.md) for the branch model, carried patches, and release steps. Everything below is upstream's README.
+
 <h1 align="center">
 
   ![go2rtc](assets/logo.gif)
