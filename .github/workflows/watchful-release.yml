@@ -2,6 +2,11 @@ name: Watchful release
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Release tag to (re)build, e.g. v1.9.14-watchful.1. Empty builds this branch.'
+        required: false
+        default: ''
   push:
     branches: ['watchful']
     tags: ['v*']
@@ -20,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           # Full history + tags so `go build` stamps the tagged version.
           fetch-depth: 0
 
@@ -29,8 +35,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=ref,event=branch
+            type=ref,event=branch,enable=${{ inputs.ref == '' }}
             type=match,pattern=v(.*),group=1
+            type=match,pattern=v(.*),group=1,value=${{ inputs.ref }},enable=${{ inputs.ref != '' }}
 
       # arm64 layers are emulated; the Blacksmith builder replaces buildx.
       - uses: docker/setup-qemu-action@v3
