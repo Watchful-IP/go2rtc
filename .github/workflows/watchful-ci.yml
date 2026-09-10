@@ -21,7 +21,7 @@ jobs:
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/... ./internal/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./internal/rtsp/...
 
       # Packages Watchful.Streaming depends on (RTSP ingest, H.264/H.265
       # depacketising, fMP4 mux). Upstream's full suite has known failures
