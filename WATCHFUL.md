@@ -63,12 +63,16 @@ the table, then release.
 1. Set `app.Version` in `main.go` to `X.Y.Z-watchful.N` (tag builds stamp
    this exactly; branch builds append `+dev.<sha>`).
 2. Tag `vX.Y.Z-watchful.N` on `watchful` and push the tag. The
-   `watchful-release` workflow pushes `ghcr.io/watchful-ip/go2rtc:X.Y.Z-watchful.N`
+   `watchful-release` workflow pushes
+   `us-docker.pkg.dev/watchful-global/watchful-docker-public/go2rtc:X.Y.Z-watchful.N`
    for linux/amd64 and arm64. Every push to `watchful` also refreshes the
-   `:watchful` tag for local use only.
+   `:watchful` tag for local use only. The registry is public (anonymous pull);
+   the workflow authenticates through the `GCP_WORKLOAD_IDENTITY_PROVIDER` and
+   `GCP_SERVICE_ACCOUNT_EMAIL` repo secrets (Infrastructure `global/wif.tf`,
+   `github-go2rtc-ci`).
 3. Bump consumers: `charts/watchful-core/values.yaml` (`streaming.go2rtc.image`),
    per-environment overrides in `deployment-config`, `Watchful/src/docker-compose.yml`,
-   and `ihub/src/tooling/cli/stream-diagnostics/playback-contract.ts`.
+   and `ihub/apps/cli/src/commands/stream-diagnostics/playback-contract.ts`.
 
 ## Reviewed but not carried
 
