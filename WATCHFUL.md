@@ -69,7 +69,8 @@ the table, then release.
    `:watchful` tag for local use only. The registry is public (anonymous pull);
    the workflow authenticates through the `GCP_WORKLOAD_IDENTITY_PROVIDER` and
    `GCP_SERVICE_ACCOUNT_EMAIL` repo secrets (Infrastructure `global/wif.tf`,
-   `github-go2rtc-ci`).
+   `github-go2rtc-ci`). To rebuild an existing tag with the current workflow:
+   `gh workflow run watchful-release.yml --ref watchful -f ref=vX.Y.Z-watchful.N`.
 3. Bump consumers: `charts/watchful-core/values.yaml` (`streaming.go2rtc.image`),
    per-environment overrides in `deployment-config`, `Watchful/src/docker-compose.yml`,
    and `ihub/apps/cli/src/commands/stream-diagnostics/playback-contract.ts`.
