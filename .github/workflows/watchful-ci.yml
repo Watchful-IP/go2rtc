@@ -17,14 +17,25 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
 
+      - name: Install media validation tools
+        run: |
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          }
+
       - name: Build
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./internal/rtsp/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/...
 
       # Packages Watchful.Streaming depends on (RTSP ingest, H.264/H.265
-      # depacketising, fMP4 mux). Upstream's full suite has known failures
+      # depacketising, native HLS ingest, fMP4 mux). Upstream's full suite has known failures
       # unrelated to these paths.
       - name: Test
-        run: go test ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./internal/rtsp/...
+        run: go test ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/...
+
+      - name: Race test HLS and MP4
+        env: { CGO_ENABLED: 1 }
+        run: go test -race ./pkg/core/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/hls/... ./pkg/mp4/... ./pkg/ivideon/...

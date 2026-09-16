@@ -33,6 +33,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 | tcp: RFC 7616 digest auth (SHA-256, qop) | [#2451](https://github.com/AlexxIT/go2rtc/pull/2451) | Newer Hikvision/Axis firmware rejects MD5-only |
 | h265: route AP truncation through loss-recovery reset | fork-only | Keeps #2296 consistent with #2479 |
 | Bump x/net, x/crypto, pion/dtls, pion/stun | replaces #2449, #2382 | Published advisories |
+| Native fMP4/CMAF HLS ingest | fork-only, W-963 | H.264/HEVC/AAC, AES-128, bounded multi-track demuxing; [evidence and limits](pkg/hls/README.md) |
 
 ## Adding a patch
 

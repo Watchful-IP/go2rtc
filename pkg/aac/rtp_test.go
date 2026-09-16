@@ -31,3 +31,26 @@ func TestBuggy_RTSP_AAC(t *testing.T) {
 
 	require.Equal(t, len(payload), size+ADTSHeaderSize)
 }
+
+func TestRTPPayPreservesExplicitTiming(t *testing.T) {
+	var timestamps []uint32
+	handler := RTPPay(func(packet *rtp.Packet) {
+		require.Equal(t, uint8(2), packet.Version)
+		require.False(t, packet.Extension)
+		timestamps = append(timestamps, packet.Timestamp)
+	})
+	for _, ts := range []uint32{4800, 5824, 9000} {
+		p := &rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: []byte{1, 2}}
+		core.SetSampleTiming(p, core.SampleTiming{DecodeTime: uint64(ts), Duration: 1024})
+		handler(p)
+	}
+	require.Equal(t, []uint32{4800, 5824, 9000}, timestamps)
+}
+
+func TestRTPPayLegacyClock(t *testing.T) {
+	var timestamps []uint32
+	handler := RTPPay(func(p *rtp.Packet) { timestamps = append(timestamps, p.Timestamp) })
+	handler(&rtp.Packet{Payload: []byte{1, 2}})
+	handler(&rtp.Packet{Payload: []byte{1, 2}})
+	require.Equal(t, []uint32{0, 1024}, timestamps)
+}

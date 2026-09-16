@@ -1,116 +1,288 @@
 package mp4
 
 import (
-	"github.com/AlexxIT/go2rtc/pkg/aac"
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+
 	"github.com/AlexxIT/go2rtc/pkg/core"
-	"github.com/AlexxIT/go2rtc/pkg/h264"
-	"github.com/AlexxIT/go2rtc/pkg/iso"
 	"github.com/pion/rtp"
 )
 
-type Demuxer struct {
-	codecs     map[uint32]*core.Codec
-	timeScales map[uint32]float32
+type track struct {
+	codec                              *core.Codec
+	scale, duration, size, description uint32
+	nalLength                          int
 }
 
-func (d *Demuxer) Probe(init []byte) (medias []*core.Media) {
-	var trackID, timeScale uint32
+type Demuxer struct {
+	tracks  map[uint32]*track
+	clockID uint32
+}
 
-	if d.codecs == nil {
-		d.codecs = make(map[uint32]*core.Codec)
-		d.timeScales = make(map[uint32]float32)
-	}
-
-	atoms, _ := iso.DecodeAtoms(init)
-	for _, atom := range atoms {
-		var codec *core.Codec
-
-		switch atom := atom.(type) {
-		case *iso.AtomTkhd:
-			trackID = atom.TrackID
-		case *iso.AtomMdhd:
-			timeScale = atom.TimeScale
-		case *iso.AtomVideo:
-			switch atom.Name {
-			case "avc1":
-				codec = h264.ConfigToCodec(atom.Config)
-			}
-		case *iso.AtomAudio:
-			switch atom.Name {
-			case "mp4a":
-				codec = aac.ConfigToCodec(atom.Config)
-			}
-		}
-
-		if codec != nil && timeScale > 0 {
-			d.codecs[trackID] = codec
-			d.timeScales[trackID] = float32(codec.ClockRate) / float32(timeScale)
-
-			medias = append(medias, &core.Media{
-				Kind:      codec.Kind(),
-				Direction: core.DirectionRecvonly,
-				Codecs:    []*core.Codec{codec},
-			})
-		}
-	}
-
-	return
+type Sample struct {
+	TrackID             uint32
+	Packet              *core.Packet
+	DecodeTime          uint64
+	Duration, TimeScale uint32
 }
 
 func (d *Demuxer) GetTrackID(codec *core.Codec) uint32 {
-	for trackID, c := range d.codecs {
-		if c == codec {
-			return trackID
+	for id, t := range d.tracks {
+		if t.codec == codec {
+			return id
 		}
 	}
 	return 0
 }
 
-func (d *Demuxer) Demux(data2 []byte) (trackID uint32, packets []*core.Packet) {
-	atoms, err := iso.DecodeAtoms(data2)
+// Demux validates the complete segment before exposing any samples.
+func (d *Demuxer) Demux(data []byte) ([]Sample, error) {
+	if len(data) > 64<<20 {
+		return nil, errors.New("mp4: segment exceeds size limit")
+	}
+	bs, err := boxes(data, 0, len(data))
 	if err != nil {
-		return 0, nil
+		return nil, err
 	}
-
-	var ts uint32
-	var trun *iso.AtomTrun
-	var data []byte
-
-	for _, atom := range atoms {
-		switch atom := atom.(type) {
-		case *iso.AtomTfhd:
-			trackID = atom.TrackID
-		case *iso.AtomTfdt:
-			ts = uint32(atom.DecodeTime)
-		case *iso.AtomTrun:
-			trun = atom
-		case *iso.AtomMdat:
-			data = atom.Data
+	var mdats []box
+	for _, b := range bs {
+		if b.name == "mdat" {
+			mdats = append(mdats, b)
 		}
 	}
-
-	timeScale := d.timeScales[trackID]
-	if timeScale == 0 {
-		return 0, nil
-	}
-
-	n := len(trun.SamplesDuration)
-	packets = make([]*core.Packet, n)
-
-	for i := 0; i < n; i++ {
-		duration := trun.SamplesDuration[i]
-		size := trun.SamplesSize[i]
-
-		// can be SPS, PPS and IFrame in one packet
-		timestamp := uint32(float32(ts) * timeScale)
-		packets[i] = &rtp.Packet{
-			Header:  rtp.Header{Timestamp: timestamp},
-			Payload: data[:size],
+	var out []Sample
+	for _, b := range bs {
+		if b.name != "moof" {
+			continue
 		}
-
-		data = data[size:]
-		ts += duration
+		trafs, err := children(data, b)
+		if err != nil {
+			return nil, err
+		}
+		base := int64(b.start)
+		for _, traf := range trafs {
+			if traf.name != "traf" {
+				continue
+			}
+			samples, end, err := d.demuxTrack(data, traf, int64(b.start), base, mdats)
+			if err != nil {
+				return nil, err
+			}
+			base = end
+			out = append(out, samples...)
+			if len(out) > 65536 {
+				return nil, errors.New("mp4: too many samples")
+			}
+		}
 	}
+	if len(out) == 0 {
+		return nil, errors.New("mp4: no supported samples")
+	}
+	return out, nil
+}
 
-	return
+func (d *Demuxer) demuxTrack(data []byte, traf box, moof, implicitBase int64, mdats []box) ([]Sample, int64, error) {
+	bs, err := children(data, traf)
+	if err != nil {
+		return nil, 0, err
+	}
+	var tfhd, tfdt *box
+	for i := range bs {
+		switch bs[i].name {
+		case "tfhd":
+			if tfhd != nil {
+				return nil, 0, errInvalidMP4
+			}
+			tfhd = &bs[i]
+		case "tfdt":
+			if tfdt != nil {
+				return nil, 0, errInvalidMP4
+			}
+			tfdt = &bs[i]
+		case "senc", "saiz", "saio":
+			return nil, 0, errors.New("mp4: encrypted fragments require ffmpeg")
+		}
+	}
+	if tfhd == nil || tfdt == nil {
+		return nil, 0, errors.New("mp4: missing tfhd or tfdt")
+	}
+	r := fields{data: tfhd.data}
+	flags := r.u32()
+	id := r.u32()
+	t := d.tracks[id]
+	if t == nil {
+		return nil, 0, fmt.Errorf("mp4: unknown track %d", id)
+	}
+	if flags>>24 != 0 || flags & ^uint32(0x03003b) != 0 {
+		return nil, 0, errors.New("mp4: unsupported tfhd flags")
+	}
+	base := implicitBase
+	if flags&0x020000 != 0 {
+		base = moof
+	}
+	if flags&1 != 0 {
+		v := r.u64()
+		if v > uint64(len(data)) {
+			return nil, 0, errors.New("mp4: base offset outside segment")
+		}
+		base = int64(v)
+	}
+	desc, duration, size := t.description, t.duration, t.size
+	if flags&2 != 0 {
+		desc = r.u32()
+	}
+	if desc != 1 {
+		return nil, 0, errors.New("mp4: unsupported sample description")
+	}
+	if flags&8 != 0 {
+		duration = r.u32()
+	}
+	if flags&16 != 0 {
+		size = r.u32()
+	}
+	if flags&32 != 0 {
+		r.u32()
+	}
+	if r.err != nil {
+		return nil, 0, r.err
+	}
+	r = fields{data: tfdt.data}
+	version := r.u32()
+	var ts uint64
+	switch version {
+	case 0:
+		ts = uint64(r.u32())
+	case 1 << 24:
+		ts = r.u64()
+	default:
+		return nil, 0, errors.New("mp4: unsupported tfdt version")
+	}
+	if r.err != nil {
+		return nil, 0, r.err
+	}
+	pos := base
+	var out []Sample
+	for _, b := range bs {
+		if b.name != "trun" {
+			continue
+		}
+		r = fields{data: b.data}
+		flags := r.u32()
+		count := r.u32()
+		version := flags >> 24
+		flags &= 0xffffff
+		if version > 1 || flags & ^uint32(0xf05) != 0 || flags&4 != 0 && flags&0x400 != 0 {
+			return nil, 0, errors.New("mp4: unsupported trun flags")
+		}
+		if count > 65536 || len(out)+int(count) > 65536 {
+			return nil, 0, errors.New("mp4: too many samples")
+		}
+		if flags&1 != 0 {
+			pos = base + int64(int32(r.u32()))
+		}
+		if flags&4 != 0 {
+			r.u32()
+		}
+		for i := uint32(0); i < count; i++ {
+			dur, n := duration, size
+			if flags&0x100 != 0 {
+				dur = r.u32()
+			}
+			if flags&0x200 != 0 {
+				n = r.u32()
+			}
+			if flags&0x400 != 0 {
+				r.u32()
+			}
+			var cts int64
+			if flags&0x800 != 0 {
+				v := r.u32()
+				cts = int64(v)
+				if version == 1 {
+					cts = int64(int32(v))
+				}
+			}
+			if r.err != nil {
+				return nil, 0, r.err
+			}
+			if dur == 0 || n == 0 || ts > math.MaxUint64-uint64(dur) {
+				return nil, 0, errors.New("mp4: invalid sample duration or size")
+			}
+			end := pos + int64(n)
+			index := sort.Search(len(mdats), func(i int) bool { return int64(mdats[i].end) > pos })
+			valid := index < len(mdats) && pos >= int64(mdats[index].payload) && end <= int64(mdats[index].end)
+			if !valid {
+				return nil, 0, errors.New("mp4: sample outside mdat")
+			}
+			if t.codec != nil {
+				// The downstream muxer stores CTS in a uint16 RTP extension field.
+				if cts < 0 || uint64(cts)*uint64(t.codec.ClockRate)/uint64(t.scale) > math.MaxUint16 {
+					return nil, 0, errors.New("mp4: composition offset requires ffmpeg")
+				}
+				minNAL := 1
+				if t.codec.Name == core.CodecH265 {
+					minNAL = 2
+				}
+				payload, err := normalizeNALs(data[pos:end], t.nalLength, minNAL)
+				if err != nil {
+					return nil, 0, err
+				}
+				offset := uint32(uint64(cts) * uint64(t.codec.ClockRate) / uint64(t.scale))
+				if ts > math.MaxUint64-uint64(cts) {
+					return nil, 0, errors.New("mp4: presentation time overflow")
+				}
+				timestamp := scaleTimestamp(ts+uint64(cts), t.codec.ClockRate, t.scale)
+				decode, ok := rescaleTime(ts, t.scale, t.codec.ClockRate)
+				if !ok {
+					return nil, 0, errors.New("mp4: decode time overflow")
+				}
+				endTime, ok := rescaleTime(ts+uint64(dur), t.scale, t.codec.ClockRate)
+				if !ok || endTime <= decode || endTime-decode > math.MaxUint32 {
+					return nil, 0, errors.New("mp4: unrepresentable sample duration")
+				}
+				packet := &rtp.Packet{Header: rtp.Header{Timestamp: timestamp}, Payload: payload}
+				core.SetSampleTiming(packet, core.SampleTiming{ClockID: d.clockID, DecodeTime: decode, Duration: uint32(endTime - decode), CompositionOffset: offset})
+				out = append(out, Sample{id, packet, ts, dur, t.scale})
+			}
+			pos = end
+			ts += uint64(dur)
+		}
+		if r.err != nil {
+			return nil, 0, r.err
+		}
+	}
+	return out, pos, nil
+}
+
+// Divide before multiplying so long-running streams retain integer precision.
+func scaleTimestamp(ts uint64, clock, scale uint32) uint32 {
+	return uint32(ts/uint64(scale))*clock + uint32(ts%uint64(scale)*uint64(clock)/uint64(scale))
+}
+
+// Compatible permits refreshed initialization data without mutating receiver codecs.
+func (d *Demuxer) Compatible(other *Demuxer) bool {
+	if len(d.tracks) != len(other.tracks) {
+		return false
+	}
+	for id, t := range d.tracks {
+		o := other.tracks[id]
+		if o == nil || t.scale != o.scale || (t.codec == nil) != (o.codec == nil) {
+			return false
+		}
+		if t.codec != nil && *t.codec != *o.codec {
+			return false
+		}
+	}
+	return true
+}
+
+func rescaleTime(value uint64, from, to uint32) (uint64, bool) {
+	whole := value / uint64(from)
+	remainder := value % uint64(from) * uint64(to) / uint64(from)
+	if whole > (math.MaxUint64-remainder)/uint64(to) {
+		return 0, false
+	}
+	return whole*uint64(to) + remainder, true
 }

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -19,7 +21,9 @@ type Producer struct {
 
 	buf []byte
 
-	dem *mp4.Demuxer
+	dem      *mp4.Demuxer
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 func Dial(source string) (core.Producer, error) {
@@ -35,6 +39,7 @@ func Dial(source string) (core.Producer, error) {
 		return nil, err
 	}
 
+	conn.SetReadLimit(64 << 20)
 	prod := &Producer{
 		Connection: core.Connection{
 			ID:         core.NewID(),
@@ -46,6 +51,7 @@ func Dial(source string) (core.Producer, error) {
 			Transport:  conn,
 		},
 		conn: conn,
+		done: make(chan struct{}),
 	}
 
 	if err = prod.probe(); err != nil {
@@ -66,6 +72,7 @@ func GetLiveStream(id string) (string, error) {
 		return "", err
 	}
 
+	defer resp.Body.Close()
 	var v struct {
 		Message string `json:"message"`
 		Result  struct {
@@ -78,7 +85,7 @@ func GetLiveStream(id string) (string, error) {
 	}
 
 	if !v.Success {
-		return "", fmt.Errorf("ivideon: can't get live_stream: " + v.Message)
+		return "", fmt.Errorf("ivideon: can't get live_stream: %s", v.Message)
 	}
 
 	return v.Result.URL, nil
@@ -91,33 +98,58 @@ func (p *Producer) Start() error {
 		receivers[trackID] = receiver
 	}
 
-	ch := make(chan []byte, 10)
-	defer close(ch)
-
-	ch <- p.buf
-
+	ch := make(chan []mp4.Sample, 10)
+	done := p.done
+	finished := make(chan struct{})
+	defer func() { p.Stop(); <-finished }()
 	go func() {
-		// add delay to the stream for smooth playing (not a best solution)
-		t0 := time.Now()
-
-		for data := range ch {
-			trackID, packets := p.dem.Demux(data)
-			if receiver := receivers[trackID]; receiver != nil {
-				clockRate := time.Duration(receiver.Codec.ClockRate)
-				for _, packet := range packets {
-					// synchronize framerate for WebRTC and MSE
-					ts := time.Second * time.Duration(packet.Timestamp) / clockRate
-					d := ts - time.Since(t0)
-					if d < 0 {
-						d = 10 * time.Millisecond
+		defer close(finished)
+		start := time.Now()
+		var first time.Duration
+		initialized := false
+		for {
+			select {
+			case <-done:
+				return
+			case samples := <-ch:
+				for _, sample := range samples {
+					receiver := receivers[sample.TrackID]
+					if receiver == nil {
+						continue
 					}
-					time.Sleep(d)
-
+					packet := sample.Packet
+					seconds := sample.DecodeTime / uint64(sample.TimeScale)
+					if seconds > uint64(math.MaxInt64/int64(time.Second))-1 {
+						p.Stop()
+						return
+					}
+					timestamp := time.Duration(seconds)*time.Second + time.Duration(sample.DecodeTime%uint64(sample.TimeScale))*time.Second/time.Duration(sample.TimeScale)
+					if !initialized {
+						first = timestamp
+						initialized = true
+					}
+					elapsed := timestamp - first
+					timer := time.NewTimer(max(0, elapsed-time.Since(start)))
+					select {
+					case <-done:
+						timer.Stop()
+						return
+					case <-timer.C:
+					}
 					receiver.WriteRTP(packet)
 				}
 			}
 		}
 	}()
+	samples, err := p.dem.Demux(p.buf)
+	if err != nil {
+		return err
+	}
+	select {
+	case ch <- samples:
+	case <-done:
+		return nil
+	}
 
 	for {
 		var msg message
@@ -136,7 +168,15 @@ func (p *Producer) Start() error {
 			}
 
 			p.Recv += len(b)
-			ch <- b
+			samples, err := p.dem.Demux(b)
+			if err != nil {
+				return err
+			}
+			select {
+			case ch <- samples:
+			case <-done:
+				return nil
+			}
 
 		default:
 			return errors.New("ivideon: wrong message type: " + msg.Type)
@@ -160,7 +200,10 @@ func (p *Producer) probe() (err error) {
 		case "stream-init":
 			// it's difficult to maintain audio
 			if strings.HasPrefix(msg.CodecString, "avc1") {
-				medias := p.dem.Probe(msg.Data)
+				medias, err := p.dem.Probe(msg.Data)
+				if err != nil {
+					return err
+				}
 				p.Medias = append(p.Medias, medias...)
 			}
 
@@ -184,4 +227,9 @@ type message struct {
 	//Duration    float32 `json:"duration"`
 	//IsKey       bool    `json:"is_key"`
 	//DataOffset  uint32  `json:"data_offset"`
+}
+
+func (p *Producer) Stop() error {
+	p.stopOnce.Do(func() { close(p.done); _ = p.Connection.Stop() })
+	return nil
 }

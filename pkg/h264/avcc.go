@@ -16,14 +16,26 @@ func RepairAVCC(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	ps := JoinNALU(sps, pps)
 
 	return func(packet *rtp.Packet) {
-		// this can happen for FLV from FFmpeg
+		if packet == nil || len(packet.Payload) < 5 {
+			return
+		}
+		// Packets are shared across consumers; repair only a local header copy.
+		clone := *packet
+		packet = &clone
 		if NALUType(packet.Payload) == NALUTypeSEI {
-			size := int(binary.BigEndian.Uint32(packet.Payload)) + 4
+			size := uint64(binary.BigEndian.Uint32(packet.Payload)) + 4
+			if size >= uint64(len(packet.Payload)) {
+				return
+			}
 			packet.Payload = packet.Payload[size:]
+			if len(packet.Payload) < 5 {
+				return
+			}
 		}
 		if NALUType(packet.Payload) == NALUTypeIFrame {
 			packet.Payload = Join(ps, packet.Payload)
 		}
+
 		handler(packet)
 	}
 }

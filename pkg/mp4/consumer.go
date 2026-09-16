@@ -1,6 +1,7 @@
 package mp4
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"sync"
@@ -15,10 +16,15 @@ import (
 
 type Consumer struct {
 	core.Connection
-	wr    *core.WriteBuffer
-	muxer *Muxer
-	mu    sync.Mutex
-	start bool
+	wr           *core.WriteBuffer
+	muxer        *Muxer
+	mu           sync.Mutex
+	start        bool
+	pending      []pendingSample
+	pendingBytes int
+	hasVideo     bool
+	clockSet     bool
+	clockID      uint32
 
 	Rotate int `json:"-"`
 	ScaleX int `json:"-"`
@@ -62,28 +68,18 @@ func NewConsumer(medias []*core.Media) *Consumer {
 
 func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
 	trackID := byte(len(c.Senders))
+	if track.Codec.IsVideo() {
+		c.mu.Lock()
+		c.hasVideo = true
+		c.mu.Unlock()
+	}
 
 	codec := track.Codec.Clone()
 	handler := core.NewSender(media, codec)
 
 	switch track.Codec.Name {
 	case core.CodecH264:
-		handler.Handler = func(packet *rtp.Packet) {
-			if !c.start {
-				if !h264.IsKeyframe(packet.Payload) {
-					return
-				}
-				c.start = true
-			}
-
-			// important to use Mutex because right fragment order
-			c.mu.Lock()
-			b := c.muxer.GetPayload(trackID, packet)
-			if n, err := c.wr.Write(b); err == nil {
-				c.Send += n
-			}
-			c.mu.Unlock()
-		}
+		handler.Handler = func(packet *rtp.Packet) { c.writePacket(trackID, packet, true, h264.IsKeyframe(packet.Payload)) }
 
 		if track.Codec.IsRTP() {
 			handler.Handler = h264.RTPDepay(track.Codec, handler.Handler)
@@ -92,22 +88,7 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 		}
 
 	case core.CodecH265:
-		handler.Handler = func(packet *rtp.Packet) {
-			if !c.start {
-				if !h265.IsKeyframe(packet.Payload) {
-					return
-				}
-				c.start = true
-			}
-
-			// important to use Mutex because right fragment order
-			c.mu.Lock()
-			b := c.muxer.GetPayload(trackID, packet)
-			if n, err := c.wr.Write(b); err == nil {
-				c.Send += n
-			}
-			c.mu.Unlock()
-		}
+		handler.Handler = func(packet *rtp.Packet) { c.writePacket(trackID, packet, true, h265.IsKeyframe(packet.Payload)) }
 
 		if track.Codec.IsRTP() {
 			handler.Handler = h265.RTPDepay(track.Codec, handler.Handler)
@@ -116,19 +97,7 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 		}
 
 	default:
-		handler.Handler = func(packet *rtp.Packet) {
-			if !c.start {
-				return
-			}
-
-			// important to use Mutex because right fragment order
-			c.mu.Lock()
-			b := c.muxer.GetPayload(trackID, packet)
-			if n, err := c.wr.Write(b); err == nil {
-				c.Send += n
-			}
-			c.mu.Unlock()
-		}
+		handler.Handler = func(packet *rtp.Packet) { c.writePacket(trackID, packet, false, false) }
 
 		switch track.Codec.Name {
 		case core.CodecAAC:
@@ -166,7 +135,10 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 
 func (c *Consumer) WriteTo(wr io.Writer) (int64, error) {
 	if len(c.Senders) == 1 && c.Senders[0].Codec.IsAudio() {
+		c.mu.Lock()
 		c.start = true
+		c.flushPending()
+		c.mu.Unlock()
 	}
 
 	init, err := c.muxer.GetInit()
@@ -186,4 +158,60 @@ func (c *Consumer) WriteTo(wr io.Writer) (int64, error) {
 	}
 
 	return c.wr.WriteTo(wr)
+}
+
+type pendingSample struct {
+	trackID byte
+	packet  *rtp.Packet
+}
+
+func (c *Consumer) writePacket(trackID byte, packet *rtp.Packet, video, keyframe bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if timing, ok := core.GetSampleTiming(packet); ok {
+		if c.clockSet && timing.ClockID != c.clockID {
+			if int32(timing.ClockID-c.clockID) < 0 {
+				return
+			}
+			c.start = !c.hasVideo
+			c.pending = nil
+			c.pendingBytes = 0
+		}
+		c.clockSet = true
+		c.clockID = timing.ClockID
+	}
+	if !c.start {
+		if !video {
+			// Track senders run independently; retain a small, bounded audio lead-in
+			// so scheduling cannot discard audio aligned with the first keyframe.
+			if _, timed := core.GetSampleTiming(packet); timed && len(c.pending) < 128 && c.pendingBytes+len(packet.Payload) <= 64<<10 {
+				clone := *packet
+				clone.Payload = bytes.Clone(packet.Payload)
+				c.pending = append(c.pending, pendingSample{trackID, &clone})
+				c.pendingBytes += len(clone.Payload)
+			}
+			return
+		}
+		if !keyframe {
+			return
+		}
+		c.start = true
+	}
+	c.writeSample(trackID, packet)
+	c.flushPending()
+}
+
+func (c *Consumer) writeSample(trackID byte, packet *rtp.Packet) {
+	b := c.muxer.GetPayload(trackID, packet)
+	if n, err := c.wr.Write(b); err == nil {
+		c.Send += n
+	}
+}
+
+func (c *Consumer) flushPending() {
+	for _, sample := range c.pending {
+		c.writeSample(sample.trackID, sample.packet)
+	}
+	c.pending = nil
+	c.pendingBytes = 0
 }
