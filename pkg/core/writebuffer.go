@@ -76,6 +76,9 @@ func (w *WriteBuffer) Reset(wr io.Writer) {
 		}
 	}
 	w.Writer = wr
+	if w.err != nil {
+		w.done()
+	}
 	w.mu.Unlock()
 }
 
@@ -121,4 +124,14 @@ func (o *OnceBuffer) Buffer() []byte {
 
 func (o *OnceBuffer) Len() int {
 	return len(o.buf)
+}
+
+// Finish ends finite output without discarding bytes buffered before WriteTo.
+func (w *WriteBuffer) Finish(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.err == nil {
+		w.err = err
+	}
+	w.done()
 }

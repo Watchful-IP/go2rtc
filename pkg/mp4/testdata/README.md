@@ -30,3 +30,20 @@ ffmpeg -y -i pkg/mp4/testdata/h264.mp4 -c copy -f mpegts pkg/mp4/testdata/h264.t
 The H.264 fixture includes B frames with positive composition offsets. Hand-built
 unit fixtures cover signed data offsets, explicit and implicit bases, multiple
 runs, inherited defaults, extended box sizes, malformed data, and long timelines.
+
+## Progressive input fixtures
+
+Remux the synthetic elementary streams into tail-index and fast-start files.
+Disable edit lists so that the fixture's sample timeline is fully representable
+without trimming; separate table mutation tests exercise supported/rejected edits.
+
+```sh
+ffmpeg -y -i pkg/mp4/testdata/h264.mp4 -c copy -use_editlist 0 pkg/mp4/testdata/progressive.mp4
+ffmpeg -y -i pkg/mp4/testdata/progressive.mp4 -c copy -use_editlist 0 -movflags +faststart pkg/mp4/testdata/progressive-fast.mp4
+ffmpeg -y -i pkg/mp4/testdata/h265.mp4 -c copy -use_editlist 0 pkg/mp4/testdata/progressive-hevc.mp4
+for name in progressive progressive-hevc; do
+  ffprobe -v error -show_packets -show_streams -show_data_hash sha256 \
+    -show_entries packet=stream_index,dts,pts,duration,size,data_hash:stream=index,id,time_base,codec_name \
+    -of json=compact=1 "pkg/mp4/testdata/$name.mp4" > "pkg/mp4/testdata/$name.json"
+done
+```

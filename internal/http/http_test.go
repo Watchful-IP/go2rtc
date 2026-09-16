@@ -1,11 +1,14 @@
 package http
 
 import (
+	"bytes"
+	"github.com/AlexxIT/go2rtc/pkg/mp4"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/hls"
 	"github.com/stretchr/testify/require"
@@ -38,6 +41,25 @@ func TestHLSHTTPDispatch(t *testing.T) {
 			defer p.Stop()
 			require.IsType(t, &hls.Producer{}, p)
 			require.Len(t, p.GetMedias(), 2)
+		})
+	}
+}
+
+func TestProgressiveHTTPDispatch(t *testing.T) {
+	data, err := os.ReadFile("../../pkg/mp4/testdata/progressive.mp4")
+	require.NoError(t, err)
+	for _, contentType := range []string{"video/mp4", "application/octet-stream"} {
+		t.Run(contentType, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", contentType)
+				http.ServeContent(w, r, "clip", time.Time{}, bytes.NewReader(data))
+			}))
+			defer server.Close()
+			req, _ := http.NewRequest("GET", server.URL+"/opaque-proxy-token", nil)
+			p, err := do(req)
+			require.NoError(t, err)
+			defer p.Stop()
+			require.IsType(t, &mp4.FileProducer{}, p)
 		})
 	}
 }
