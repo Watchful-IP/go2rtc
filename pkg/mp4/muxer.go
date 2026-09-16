@@ -11,10 +11,14 @@ import (
 )
 
 type Muxer struct {
-	index  uint32
-	dts    []uint64
-	pts    []uint32
-	codecs []*core.Codec
+	index       uint32
+	dts         []uint64
+	pts         []uint32
+	codecs      []*core.Codec
+	timingEpoch uint64
+	timingClock uint32
+	timingID    uint32
+	timingBase  uint64
 }
 
 func (m *Muxer) AddTrack(codec *core.Codec) {
@@ -112,6 +116,7 @@ func (m *Muxer) GetInit() ([]byte, error) {
 
 func (m *Muxer) Reset() {
 	m.index = 0
+	m.timingClock = 0
 	for i := range m.dts {
 		m.dts[i] = 0
 		m.pts[i] = 0
@@ -123,6 +128,7 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 
 	m.index++
 
+	timing, timed := core.GetSampleTiming(packet)
 	duration := packet.Timestamp - m.pts[trackID]
 	m.pts[trackID] = packet.Timestamp
 
@@ -155,18 +161,53 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 		m.pts[trackID] += duration
 	}
 
+	decodeTime := m.dts[trackID]
+	composition := uint32(packet.ExtensionProfile)
+	if timed {
+		if m.timingClock == 0 || timing.ClockID != m.timingID {
+			// Source IDs are monotonic modulo uint32. Ignore queued packets from
+			// a retired source after a reconnect, without retaining an ID history.
+			if m.timingClock != 0 && int32(timing.ClockID-m.timingID) < 0 {
+				return nil
+			}
+			m.timingBase = 0
+			for i, end := range m.dts {
+				scaled, ok := rescaleTime(end, m.codecs[i].ClockRate, codec.ClockRate)
+				if !ok {
+					return nil
+				}
+				m.timingBase = max(m.timingBase, scaled)
+			}
+			m.timingEpoch = timing.DecodeTime
+			m.timingClock = codec.ClockRate
+			m.timingID = timing.ClockID
+		}
+		epoch, ok := rescaleTime(m.timingEpoch, m.timingClock, codec.ClockRate)
+		if !ok || timing.DecodeTime < epoch {
+			return nil
+		}
+		base, ok := rescaleTime(m.timingBase, m.timingClock, codec.ClockRate)
+		if !ok {
+			return nil
+		}
+		decodeTime = base + timing.DecodeTime - epoch
+		if decodeTime < m.dts[trackID] {
+			return nil
+		}
+		duration = timing.Duration
+		composition = timing.CompositionOffset
+	}
 	size := len(packet.Payload)
 
 	mv := iso.NewMovie(1024 + size)
 	mv.WriteMovieFragment(
-		// ExtensionProfile - wrong place for CTS (supported by mpegts.Demuxer)
-		m.index, uint32(trackID+1), duration, uint32(size), flags, m.dts[trackID], uint32(packet.ExtensionProfile),
+		m.index, uint32(trackID+1), duration, uint32(size), flags, decodeTime, composition,
 	)
 	mv.WriteData(packet.Payload)
 
 	//log.Printf("[MP4] idx:%3d trk:%d dts:%6d cts:%4d dur:%5d time:%10d len:%5d", m.index, trackID+1, m.dts[trackID], packet.SSRC, duration, packet.Timestamp, len(packet.Payload))
 
-	m.dts[trackID] += uint64(duration)
+	m.dts[trackID] = decodeTime + uint64(duration)
 
 	return mv.Bytes()
 }

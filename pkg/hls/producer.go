@@ -79,6 +79,11 @@ type Producer struct {
 }
 
 func (p *Producer) Start() error {
+	clocks := make(map[uint32]uint32)
+	for _, media := range p.Medias {
+		codec := media.Codecs[0]
+		clocks[p.dem.GetTrackID(codec)] = codec.ClockRate
+	}
 	receivers := make(map[uint32]*core.Receiver)
 	for _, r := range p.Receivers {
 		receivers[p.dem.GetTrackID(r.Codec)] = r
@@ -94,6 +99,7 @@ func (p *Producer) Start() error {
 	var periodOffset, timelineEnd time.Duration
 	reset := true
 	lastDecode := make(map[uint32]uint64)
+	origins := make(map[uint32]trackOrigin)
 	for {
 		times := make(map[*core.Packet]time.Duration, len(samples))
 		for _, s := range samples {
@@ -125,12 +131,19 @@ func (p *Producer) Start() error {
 				return err
 			}
 			timelineEnd = max(timelineEnd, elapsed+time.Duration(s.Duration)*time.Second/time.Duration(s.TimeScale))
-			// Rebase each discontinuity onto one continuous output clock.
-			clock := uint64(90000)
-			if r := receivers[s.TrackID]; r != nil {
-				clock = uint64(r.Codec.ClockRate)
+			// Anchor once per track, then retain integer source-clock deltas.
+			timing, _ := core.GetSampleTiming(s.Packet)
+			origin, ok := origins[s.TrackID]
+			if !ok {
+				clock := uint64(clocks[s.TrackID])
+				origin = trackOrigin{timing.DecodeTime, uint64(elapsed)/uint64(time.Second)*clock + uint64(elapsed)%uint64(time.Second)*clock/uint64(time.Second)}
+				origins[s.TrackID] = origin
 			}
-			s.Packet.Timestamp = uint32(uint64(elapsed)/uint64(time.Second)*clock+uint64(elapsed)%uint64(time.Second)*clock/uint64(time.Second)) + uint32(s.Packet.ExtensionProfile)
+			timing.DecodeTime = origin.output + timing.DecodeTime - origin.input
+			timing.ClockID = p.ID
+			core.SetSampleTiming(s.Packet, timing)
+			s.Packet.Timestamp = uint32(timing.DecodeTime) + timing.CompositionOffset
+
 			p.Recv += len(s.Packet.Payload)
 			if r := receivers[s.TrackID]; r != nil {
 				r.WriteRTP(s.Packet)
@@ -146,6 +159,7 @@ func (p *Producer) Start() error {
 			if batch.discontinuity {
 				reset = true
 				lastDecode = make(map[uint32]uint64)
+				origins = make(map[uint32]trackOrigin)
 			}
 			samples = batch.samples
 		}
@@ -201,3 +215,5 @@ func (p *Producer) readSegment() sampleBatch {
 	samples, err := p.dem.Demux(data)
 	return sampleBatch{samples, discontinuity, err}
 }
+
+type trackOrigin struct{ input, output uint64 }

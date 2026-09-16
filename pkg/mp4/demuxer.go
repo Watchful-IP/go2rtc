@@ -16,7 +16,10 @@ type track struct {
 	nalLength                          int
 }
 
-type Demuxer struct{ tracks map[uint32]*track }
+type Demuxer struct {
+	tracks  map[uint32]*track
+	clockID uint32
+}
 
 type Sample struct {
 	TrackID             uint32
@@ -231,7 +234,17 @@ func (d *Demuxer) demuxTrack(data []byte, traf box, moof, implicitBase int64, md
 					return nil, 0, errors.New("mp4: presentation time overflow")
 				}
 				timestamp := scaleTimestamp(ts+uint64(cts), t.codec.ClockRate, t.scale)
-				out = append(out, Sample{id, &rtp.Packet{Header: rtp.Header{Timestamp: timestamp, ExtensionProfile: uint16(offset)}, Payload: payload}, ts, dur, t.scale})
+				decode, ok := rescaleTime(ts, t.scale, t.codec.ClockRate)
+				if !ok {
+					return nil, 0, errors.New("mp4: decode time overflow")
+				}
+				endTime, ok := rescaleTime(ts+uint64(dur), t.scale, t.codec.ClockRate)
+				if !ok || endTime <= decode || endTime-decode > math.MaxUint32 {
+					return nil, 0, errors.New("mp4: unrepresentable sample duration")
+				}
+				packet := &rtp.Packet{Header: rtp.Header{Timestamp: timestamp}, Payload: payload}
+				core.SetSampleTiming(packet, core.SampleTiming{ClockID: d.clockID, DecodeTime: decode, Duration: uint32(endTime - decode), CompositionOffset: offset})
+				out = append(out, Sample{id, packet, ts, dur, t.scale})
 			}
 			pos = end
 			ts += uint64(dur)
@@ -263,4 +276,13 @@ func (d *Demuxer) Compatible(other *Demuxer) bool {
 		}
 	}
 	return true
+}
+
+func rescaleTime(value uint64, from, to uint32) (uint64, bool) {
+	whole := value / uint64(from)
+	remainder := value % uint64(from) * uint64(to) / uint64(from)
+	if whole > (math.MaxUint64-remainder)/uint64(to) {
+		return 0, false
+	}
+	return whole*uint64(to) + remainder, true
 }

@@ -31,12 +31,33 @@ explicit error rather than replaying old segments indefinitely.
 ## Deliberate limits
 
 Use an explicit `ffmpeg:` source for SAMPLE-AES/DRM, separate audio/video
-renditions, unsupported codecs, and composition offsets that go2rtc's existing
-output muxer cannot represent (negative or more than 65,535 codec-clock ticks).
+renditions, unsupported codecs, and composition offsets outside the native ingest range
+(negative or more than 65,535 codec-clock ticks).
 There is no automatic FFmpeg fallback. LL-HLS partial segments are not consumed;
 playlists exposing complete segments can still play at ordinary HLS latency.
 Standalone/progressive MP4 input is outside this change. Container support does
 not add HEVC decoding to browsers that lack it.
+
+## Output timing and reconnects
+
+Explicit sample decode times, durations, and composition offsets are retained
+through the raw packet pipeline. The MP4 muxer uses this timing instead of
+inferring durations from presentation timestamps. This matters for B frames,
+variable frame rates, and AAC encoder lead-in. Internal timing metadata is not
+sent in RTP headers; payloaders preserve the presentation clock.
+
+A new producer clock waits for a new video keyframe and continues the output
+clock rather than rewinding it. Queued packets from the retired producer are
+ignored. Audio arriving before the first video worker runs is retained in a
+bounded lead-in (128 samples, at most 64 KiB, with owned payload storage).
+
+The initial decoded-frame test missed a timing defect: H.264 frames spanning
+1.0 second were remuxed across 1.6 seconds. The stronger test runs the actual HLS
+producer and asynchronous MP4 consumer and compares all audio/video sample
+counts, DTS, PTS, durations, and AAC payload hashes against ffprobe. It now passes
+within one codec-clock tick. CI installs FFmpeg/ffprobe so these tests cannot
+silently skip there. Fault tests also cover partial response cancellation,
+exhausted HTTP retries, and a truncated source alongside a healthy source.
 
 ## Evidence and prior art
 

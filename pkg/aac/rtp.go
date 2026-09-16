@@ -81,12 +81,16 @@ func RTPPay(handler core.HandlerFunc) core.HandlerFunc {
 		binary.BigEndian.PutUint16(payload[2:], auSize<<3)
 		copy(payload[4:], packet.Payload)
 
+		timestamp := ts
+		if _, ok := core.GetSampleTiming(packet); ok {
+			timestamp = packet.Timestamp
+		}
 		clone := rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
 				Marker:         true,
 				SequenceNumber: seq,
-				Timestamp:      ts,
+				Timestamp:      timestamp,
 			},
 			Payload: payload,
 		}

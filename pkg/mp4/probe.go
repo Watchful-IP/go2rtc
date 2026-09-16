@@ -82,6 +82,9 @@ func (d *Demuxer) Probe(init []byte) ([]*core.Media, error) {
 		return nil, errors.New("mp4: no supported tracks")
 	}
 	d.tracks = tracks
+	if d.clockID == 0 {
+		d.clockID = core.NewID()
+	}
 	return medias, nil
 }
 
