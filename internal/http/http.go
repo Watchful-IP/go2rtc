@@ -67,23 +67,24 @@ func do(req *http.Request) (core.Producer, error) {
 	}
 
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		return nil, errors.New(res.Status)
 	}
 
 	// 1. Guess format from content type
-	ct := res.Header.Get("Content-Type")
+	ct := strings.ToLower(res.Header.Get("Content-Type"))
 	if i := strings.IndexByte(ct, ';'); i > 0 {
 		ct = ct[:i]
 	}
 
 	var ext string
-	if i := strings.LastIndexByte(req.URL.Path, '.'); i > 0 {
-		ext = req.URL.Path[i+1:]
+	if i := strings.LastIndexByte(res.Request.URL.Path, '.'); i > 0 {
+		ext = strings.ToLower(res.Request.URL.Path[i+1:])
 	}
 
 	switch {
-	case ct == "application/vnd.apple.mpegurl" || ext == "m3u8":
-		return hls.OpenURL(req.URL, res.Body)
+	case ct == "application/vnd.apple.mpegurl" || ct == "application/x-mpegurl" || ext == "m3u8":
+		return hls.OpenResponse(res)
 	case ct == "image/jpeg":
 		return image.Open(res)
 	case ct == "multipart/x-mixed-replace":
