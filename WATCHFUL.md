@@ -34,6 +34,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 | h265: route AP truncation through loss-recovery reset | fork-only | Keeps #2296 consistent with #2479 |
 | Bump x/net, x/crypto, pion/dtls, pion/stun | replaces #2449, #2382 | Published advisories |
 | Native fMP4/CMAF HLS ingest | fork-only, W-963 | H.264/HEVC/AAC, AES-128, bounded multi-track demuxing; [evidence and limits](pkg/hls/README.md) |
+| streams: lock the API map access | streams half of [#2444](https://github.com/AlexxIT/go2rtc/pull/2444) | Concurrent `DELETE /api/streams` crashed the process (`concurrent map writes`); upstream closed the PR over its unrelated `app.Info` half |
 
 ## Adding a patch
 
