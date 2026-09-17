@@ -2,8 +2,10 @@ package streams
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -14,31 +16,53 @@ import (
 )
 
 func TestApiStreamsDeleteConcurrent(t *testing.T) {
+	// Each request deletes its own stream: DELETE also patches the config file and
+	// returns 400 when the key is already gone, so deleting one name N times can't
+	// assert on status. Distinct names still race on the streams map.
+	const n = 20
+	names := make([]string, n)
+	config := "streams:\n"
+	for i := range n {
+		names[i] = fmt.Sprintf("test%d", i)
+		config += "  " + names[i] + ": does_not_matter\n"
+	}
+
 	oldConfigPath := app.ConfigPath
 	app.ConfigPath = filepath.Join(t.TempDir(), "go2rtc.yaml")
+	require.NoError(t, os.WriteFile(app.ConfigPath, []byte(config), 0644))
 	t.Cleanup(func() { app.ConfigPath = oldConfigPath })
 
 	streamsMu.Lock()
-	streams["test"] = NewStream(nil)
+	for _, name := range names {
+		streams[name] = NewStream(nil)
+	}
 	streamsMu.Unlock()
 	t.Cleanup(func() {
 		streamsMu.Lock()
-		delete(streams, "test")
+		for _, name := range names {
+			delete(streams, name)
+		}
 		streamsMu.Unlock()
 	})
 
+	codes := make([]int, n)
 	var wg sync.WaitGroup
-	for range 20 {
+	for i, name := range names {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			req := httptest.NewRequest("DELETE", "/api/streams?src=test", nil)
+			req := httptest.NewRequest("DELETE", "/api/streams?src="+name, nil)
 			w := httptest.NewRecorder()
 			apiStreams(w, req)
-			require.Equal(t, http.StatusOK, w.Code)
+			codes[i] = w.Code
 		}()
 	}
 	wg.Wait()
+
+	for i, name := range names {
+		require.Equal(t, http.StatusOK, codes[i], name)
+		require.Nil(t, Get(name))
+	}
 }
 
 func TestApiSchemes(t *testing.T) {
