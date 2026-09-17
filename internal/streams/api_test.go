@@ -13,6 +13,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestApiStreamsDeleteConcurrent(t *testing.T) {
+	oldConfigPath := app.ConfigPath
+	app.ConfigPath = filepath.Join(t.TempDir(), "go2rtc.yaml")
+	t.Cleanup(func() { app.ConfigPath = oldConfigPath })
+
+	streamsMu.Lock()
+	streams["test"] = NewStream(nil)
+	streamsMu.Unlock()
+	t.Cleanup(func() {
+		streamsMu.Lock()
+		delete(streams, "test")
+		streamsMu.Unlock()
+	})
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("DELETE", "/api/streams?src=test", nil)
+			w := httptest.NewRecorder()
+			apiStreams(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+		}()
+	}
+	wg.Wait()
+}
+
 func TestApiSchemes(t *testing.T) {
 	// Setup: Register some test handlers and redirects
 	HandleFunc("rtsp", func(url string) (core.Producer, error) { return nil, nil })
