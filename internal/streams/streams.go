@@ -155,6 +155,17 @@ func Delete(name string) {
 	delete(streams, name)
 }
 
+func GetAll() map[string]*Stream {
+	streamsMu.Lock()
+	defer streamsMu.Unlock()
+
+	all := make(map[string]*Stream, len(streams))
+	for name, stream := range streams {
+		all[name] = stream
+	}
+	return all
+}
+
 func GetAllNames() []string {
 	streamsMu.Lock()
 	names := make([]string, 0, len(streams))
