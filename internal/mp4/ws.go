@@ -2,6 +2,7 @@ package mp4
 
 import (
 	"errors"
+	"io"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
 	"github.com/AlexxIT/go2rtc/internal/api/ws"
@@ -33,7 +34,14 @@ func handlerWSMSE(tr *ws.Transport, msg *ws.Message) error {
 
 	tr.Write(&ws.Message{Type: "mse", Value: mp4.ContentType(cons.Codecs())})
 
-	go cons.WriteTo(tr.Writer())
+	go func() {
+		_, err := cons.WriteTo(tr.Writer())
+		if errors.Is(err, io.EOF) {
+			tr.Write(&ws.Message{Type: "end"})
+		} else if err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			tr.Write(&ws.Message{Type: "error", Value: "mse: input failed"})
+		}
+	}()
 
 	tr.OnClose(func() {
 		stream.RemoveConsumer(cons)

@@ -22,6 +22,12 @@ type Consumer struct {
 	start        bool
 	pending      []pendingSample
 	pendingBytes int
+	done         chan struct{}
+	started      chan struct{}
+	startOnce    sync.Once
+	stopOnce     sync.Once
+	ended        int
+	endErr       error
 	hasVideo     bool
 	clockSet     bool
 	clockID      uint32
@@ -61,8 +67,10 @@ func NewConsumer(medias []*core.Media) *Consumer {
 			Medias:     medias,
 			Transport:  wr,
 		},
-		muxer: &Muxer{},
-		wr:    wr,
+		done:    make(chan struct{}),
+		started: make(chan struct{}),
+		muxer:   &Muxer{},
+		wr:      wr,
 	}
 }
 
@@ -129,11 +137,13 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 
 	handler.HandleRTP(track)
 	c.Senders = append(c.Senders, handler)
+	go c.watchEnd(track, handler)
 
 	return nil
 }
 
 func (c *Consumer) WriteTo(wr io.Writer) (int64, error) {
+	c.startOnce.Do(func() { close(c.started) })
 	if len(c.Senders) == 1 && c.Senders[0].Codec.IsAudio() {
 		c.mu.Lock()
 		c.start = true

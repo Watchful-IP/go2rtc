@@ -13,6 +13,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/hls"
 	"github.com/AlexxIT/go2rtc/pkg/image"
 	"github.com/AlexxIT/go2rtc/pkg/magic"
+	"github.com/AlexxIT/go2rtc/pkg/mp4"
 	"github.com/AlexxIT/go2rtc/pkg/mpjpeg"
 	"github.com/AlexxIT/go2rtc/pkg/pcm"
 	"github.com/AlexxIT/go2rtc/pkg/tcp"
@@ -85,6 +86,8 @@ func do(req *http.Request) (core.Producer, error) {
 	switch {
 	case ct == "application/vnd.apple.mpegurl" || ct == "application/x-mpegurl" || ext == "m3u8":
 		return hls.OpenResponse(res)
+	case ct == "video/mp4" || ct == "audio/mp4" || ct == "application/mp4" || ext == "mp4":
+		return mp4.OpenFileResponse(res)
 	case ct == "image/jpeg":
 		return image.Open(res)
 	case ct == "multipart/x-mixed-replace":
@@ -94,7 +97,19 @@ func do(req *http.Request) (core.Producer, error) {
 		return pcm.Open(res.Body)
 	}
 
-	return magic.Open(res.Body)
+	rd := core.NewReadBuffer(res.Body)
+	if ct == "application/octet-stream" || ct == "" {
+		if header, err := rd.Peek(8); err == nil && string(header[4:8]) == "ftyp" {
+			res.Body = rd
+			return mp4.OpenFileResponse(res)
+		}
+		rd.Reset()
+	}
+	prod, err := magic.Open(rd)
+	if err != nil {
+		_ = rd.Close()
+	}
+	return prod, err
 }
 
 func handleTCP(rawURL string) (core.Producer, error) {

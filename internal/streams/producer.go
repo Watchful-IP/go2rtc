@@ -170,6 +170,9 @@ func (p *Producer) worker(conn core.Producer, workerID int) {
 		log.Warn().Err(err).Str("url", p.url).Caller().Send()
 	}
 
+	if finite, ok := conn.(core.FiniteProducer); ok && finite.IsFinite() {
+		return
+	}
 	p.reconnect(workerID, 0)
 }
 

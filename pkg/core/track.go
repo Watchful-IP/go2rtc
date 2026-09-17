@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/pion/rtp"
 )
@@ -11,6 +12,10 @@ var ErrCantGetTrack = errors.New("can't get track")
 
 type Receiver struct {
 	Node
+	ended    chan struct{}
+	endOnce  sync.Once
+	endErr   error
+	Lossless bool
 
 	// Deprecated: should be removed
 	Media *Media `json:"-"`
@@ -23,6 +28,7 @@ type Receiver struct {
 
 func NewReceiver(media *Media, codec *Codec) *Receiver {
 	r := &Receiver{
+		ended: make(chan struct{}),
 		Node:  Node{id: NewID(), Codec: codec},
 		Media: media,
 	}
@@ -71,8 +77,12 @@ type Sender struct {
 	Packets int `json:"packets,omitempty"`
 	Drops   int `json:"drops,omitempty"`
 
-	buf  chan *Packet
-	done chan struct{}
+	buf        chan *Packet
+	done       chan struct{}
+	cancelled  chan struct{}
+	cancelOnce sync.Once
+	lossless   bool
+	parentDone <-chan struct{}
 }
 
 func NewSender(media *Media, codec *Codec) *Sender {
@@ -92,19 +102,29 @@ func NewSender(media *Media, codec *Codec) *Sender {
 
 	buf := make(chan *Packet, bufSize)
 	s := &Sender{
-		Node:  Node{id: NewID(), Codec: codec},
-		Media: media,
-		buf:   buf,
+		Node:      Node{id: NewID(), Codec: codec},
+		Media:     media,
+		buf:       buf,
+		cancelled: make(chan struct{}),
 	}
 	s.Input = func(packet *Packet) {
 		s.mu.Lock()
-		// unblock write to nil chan - OK, write to closed chan - panic
-		select {
-		case s.buf <- packet:
-			s.Bytes += len(packet.Payload)
-			s.Packets++
-		default:
-			s.Drops++
+		if s.lossless {
+			select {
+			case s.buf <- packet:
+				s.Bytes += len(packet.Payload)
+				s.Packets++
+			case <-s.cancelled:
+			case <-s.parentDone:
+			}
+		} else {
+			select {
+			case s.buf <- packet:
+				s.Bytes += len(packet.Payload)
+				s.Packets++
+			default:
+				s.Drops++
+			}
 		}
 		s.mu.Unlock()
 	}
@@ -126,6 +146,8 @@ func (s *Sender) Bind(parent *Receiver) {
 }
 
 func (s *Sender) WithParent(parent *Receiver) *Sender {
+	s.lossless = parent.Lossless
+	s.parentDone = parent.Done()
 	s.Node.WithParent(&parent.Node)
 	return s
 }
@@ -165,6 +187,11 @@ func (s *Sender) State() string {
 }
 
 func (s *Sender) Close() {
+	s.cancelOnce.Do(func() {
+		if s.cancelled != nil {
+			close(s.cancelled)
+		}
+	})
 	// close buffer if exists
 	s.mu.Lock()
 	if s.buf != nil {
