@@ -43,7 +43,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 			stream.RemoveConsumer(cons)
 		} else {
-			api.ResponsePrettyJSON(w, streams[src])
+			api.ResponsePrettyJSON(w, stream)
 		}
 
 	case "PUT":
