@@ -12,9 +12,10 @@ func TestRecursion(t *testing.T) {
 	// create stream with some source
 	HandleFunc("test", func(string) (core.Producer, error) { return nil, nil })
 	t.Cleanup(func() { Delete("from_yaml"); Delete("rtsp://localhost:8554/from_yaml?video"); delete(handlers, "test") })
+	before := len(GetAllNames())
 	stream1, err := New("from_yaml", "test:source")
 	require.NoError(t, err)
-	require.Len(t, streams, 1)
+	require.Len(t, GetAllNames(), before+1)
 
 	// ask another unnamed stream that links go2rtc
 	query, err := url.ParseQuery("src=rtsp://localhost:8554/from_yaml?video")
@@ -26,7 +27,7 @@ func TestRecursion(t *testing.T) {
 	require.Equal(t, stream1, stream2)
 	// check stream urls is same
 	require.Equal(t, stream1.producers[0].url, stream2.producers[0].url)
-	require.Len(t, streams, 2)
+	require.Len(t, GetAllNames(), before+2)
 }
 
 func TestTempate(t *testing.T) {

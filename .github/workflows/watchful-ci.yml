@@ -28,14 +28,22 @@ jobs:
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/... ./internal/streams/...
 
-      # Packages Watchful.Streaming depends on (RTSP ingest, H.264/H.265
-      # depacketising, native HLS ingest, fMP4 mux). Upstream's full suite has known failures
-      # unrelated to these paths.
+      # Every package except the ones already broken at the upstream release tag
+      # (stale test expectations in internal/ffmpeg and pkg/hap/tlv8; tests that no
+      # longer compile in pkg/hap/camera, pkg/hap/hds and pkg/tuya) and the two
+      # cgo-only device packages, which have no tests.
+      - name: List test packages
+        id: pkgs
+        run: |
+          pkgs=$(go list -e ./... | grep -v -E '/(internal/ffmpeg|pkg/hap/tlv8|pkg/hap/camera|pkg/hap/hds|pkg/tuya|pkg/alsa/device|pkg/v4l2/device)$' | tr '\n' ' ')
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+
       - name: Test
-        run: go test ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/...
+        run: go test ${{ steps.pkgs.outputs.pkgs }}
 
-      - name: Race test HLS and MP4
-        env: { CGO_ENABLED: 1 }
-        run: go test -race ./pkg/core/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/hls/... ./pkg/mp4/... ./pkg/ivideon/...
+      # -race no longer needs cgo on linux/amd64, and enabling cgo breaks the
+      # device packages (their .c files are generator inputs, not cgo sources).
+      - name: Race test
+        run: go test -race ${{ steps.pkgs.outputs.pkgs }}

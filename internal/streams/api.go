@@ -18,7 +18,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 	// without source - return all streams list
 	if src == "" && r.Method != "POST" {
-		api.ResponseJSON(w, streams)
+		api.ResponseJSON(w, GetAll())
 		return
 	}
 
@@ -43,7 +43,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 			stream.RemoveConsumer(cons)
 		} else {
-			api.ResponsePrettyJSON(w, streams[src])
+			api.ResponsePrettyJSON(w, stream)
 		}
 
 	case "PUT":
@@ -98,7 +98,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "DELETE":
-		delete(streams, src)
+		Delete(src)
 
 		if err := app.PatchConfig([]string{"streams", src}, nil); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -108,6 +108,8 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 func apiStreamsDOT(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+
+	streams := GetAll()
 
 	dot := make([]byte, 0, 1024)
 	dot = append(dot, "digraph {\n"...)
