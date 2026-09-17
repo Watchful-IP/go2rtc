@@ -109,6 +109,8 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 func apiStreamsDOT(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
+	streams := GetAll()
+
 	dot := make([]byte, 0, 1024)
 	dot = append(dot, "digraph {\n"...)
 	if query.Has("src") {
