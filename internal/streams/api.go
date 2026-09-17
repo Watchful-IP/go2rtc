@@ -18,7 +18,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 	// without source - return all streams list
 	if src == "" && r.Method != "POST" {
-		api.ResponseJSON(w, streams)
+		api.ResponseJSON(w, GetAll())
 		return
 	}
 
