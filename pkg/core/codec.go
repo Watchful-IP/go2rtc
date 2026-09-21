@@ -16,6 +16,9 @@ type Codec struct {
 	Channels    uint8  // 0, 1, 2
 	FmtpLine    string
 	PayloadType uint8
+
+	// Local source policy; not advertised in SDP or codec matching.
+	H265ConservativeRecovery bool
 }
 
 // MarshalJSON - return FFprobe compatible output

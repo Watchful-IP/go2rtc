@@ -292,6 +292,15 @@ streams:
 Format: `rtsp...#{param1}#{param2}#{param3}`
 
 - Add custom timeout `#timeout=30` (in seconds)
+- Opt in to conservative H.265 loss recovery with `#h265_recovery=conservative`.
+  Use this for cameras that emit damaged pictures marked complete just before an
+  RTP sequence gap. Non-keyframes wait for the next packet and are discarded if
+  it reveals a gap; keyframes remain immediate. This typically adds about one frame
+  of latency and another frame buffer per consumer. A final pending non-keyframe
+  is not emitted if the source stops. Omit the option or use
+  `#h265_recovery=default` to preserve normal delivery timing. Malformed H.265 SEI
+  metadata is filtered in both modes, without transcoding. The option is local to
+  this source and is not sent to the camera or advertised to RTSP clients.
 - Ignore audio - `#media=video` or ignore video - `#media=audio` 
 - Ignore two-way audio API `#backchannel=0` - important for some glitchy cameras
 - Use WebSocket transport `#transport=ws...`
