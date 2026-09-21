@@ -98,6 +98,7 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 	conn := rtsp.NewClient(rawURL)
 	conn.Backchannel = true
 	conn.UserAgent = app.UserAgent
+	var h265ConservativeRecovery bool
 
 	if rawQuery != "" {
 		query := streams.ParseQuery(rawQuery)
@@ -105,6 +106,13 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 		conn.Media = query.Get("media")
 		conn.Timeout = core.Atoi(query.Get("timeout"))
 		conn.Transport = query.Get("transport")
+		switch query.Get("h265_recovery") {
+		case "", "default":
+		case "conservative":
+			h265ConservativeRecovery = true
+		default:
+			return nil, errors.New("rtsp: h265_recovery must be default or conservative")
+		}
 	}
 
 	if log.Trace().Enabled() {
@@ -140,6 +148,15 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 		}
 	}
 
+	if h265ConservativeRecovery {
+		for _, media := range conn.GetMedias() {
+			for _, codec := range media.Codecs {
+				if codec.Name == core.CodecH265 {
+					codec.H265ConservativeRecovery = true
+				}
+			}
+		}
+	}
 	return conn, nil
 }
 

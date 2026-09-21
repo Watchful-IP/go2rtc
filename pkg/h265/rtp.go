@@ -8,11 +8,15 @@ import (
 	"github.com/pion/rtp"
 )
 
+// With H265ConservativeRecovery, non-keyframes wait for the next RTP packet.
+// Stopping without another packet leaves the final pending non-keyframe unsent.
 func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	vps, sps, pps := GetParameterSet(codec.FmtpLine)
 	ps := h264.JoinNALU(vps, sps, pps)
 
 	buf := make([]byte, 0, 512*1024) // 512K
+	var spare []byte
+	var pending *rtp.Packet
 	var nuStart int
 	var seqNum uint16
 	var timestamp uint32
@@ -24,7 +28,16 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	}
 
 	return func(packet *rtp.Packet) {
-		if seen && (packet.SequenceNumber-seqNum != 1 || (fragmented && packet.Timestamp != timestamp)) {
+		lost := seen && (packet.SequenceNumber-seqNum != 1 || (fragmented && packet.Timestamp != timestamp))
+		if pending != nil {
+			// Some cameras mark a damaged picture complete just before an RTP gap.
+			// One-packet lookahead keeps that picture out of hardware decoders.
+			if !lost {
+				handler(pending)
+			}
+			spare, pending = pending.Payload[:0], nil
+		}
+		if lost {
 			// Lost fragments invalidate dependent pictures until a complete keyframe arrives.
 			reset()
 		}
@@ -132,6 +145,11 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 			return
 		}
 
+		buf = filterSEI(buf)
+		if len(buf) == 0 {
+			return
+		}
+
 		if waitKeyframe {
 			if !IsKeyframe(buf) {
 				buf = buf[:0]
@@ -145,6 +163,15 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		clone := *packet
 		clone.Version = h264.RTPPacketVersionAVC
 		clone.Payload = buf
+
+		if codec.H265ConservativeRecovery && !IsKeyframe(buf) {
+			pending = &clone
+			buf, spare = spare, nil
+			if buf == nil {
+				buf = make([]byte, 0, 512*1024)
+			}
+			return
+		}
 
 		buf = buf[:0]
 
