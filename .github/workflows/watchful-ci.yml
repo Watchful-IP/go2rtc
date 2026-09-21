@@ -43,7 +43,7 @@ jobs:
       - name: Test
         run: go test ${{ steps.pkgs.outputs.pkgs }}
 
-      # -race no longer needs cgo on linux/amd64, and enabling cgo breaks the
-      # device packages (their .c files are generator inputs, not cgo sources).
+      # The race detector requires cgo; release builds stay pure Go.
       - name: Race test
+        env: { CGO_ENABLED: 1 }
         run: go test -race ${{ steps.pkgs.outputs.pkgs }}
