@@ -20,6 +20,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 
 | Commit | Upstream | Why |
 |---|---|---|
+| h265: filter malformed SEI and opt in to conservative recovery | fork-only | Uniview malformed metadata and complete-marked frames immediately preceding RTP loss cause hardware decode failures |
 | Fix H265 RTP recovery after packet loss | [#2479](https://github.com/AlexxIT/go2rtc/pull/2479) (ours, open) | Corrupt HEVC after loss until next keyframe |
 | h265: de-aggregate RFC 7798 Aggregation Packets | [#2296](https://github.com/AlexxIT/go2rtc/pull/2296) | `ffmpeg:` sources emit APs for VPS/SPS/PPS |
 | h265: guard RepairAVCC against truncated AVCC | [#2419](https://github.com/AlexxIT/go2rtc/pull/2419) | Panic on empty packet kills the sidecar |
