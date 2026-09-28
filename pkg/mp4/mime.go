@@ -34,6 +34,8 @@ func MimeCodecs(codecs []*core.Codec) string {
 			s += MimeOpus
 		case core.CodecFLAC:
 			s += MimeFlac
+		case core.CodecJPEG:
+			s += "jpeg" // sample entry fourcc; RFC 6381 defines no other form
 		}
 	}
 

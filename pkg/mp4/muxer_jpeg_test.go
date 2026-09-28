@@ -32,8 +32,14 @@ func TestJPEGKeepsSourceTimeline(t *testing.T) {
 	stalled := demux(start + 3600 + 2*90000)
 
 	require.Equal(t, []uint64{0, 3600, 3600 + 2*90000}, []uint64{first.DecodeTime, second.DecodeTime, stalled.DecodeTime})
-	require.Equal(t, []uint32{3600, 3600, 2 * 90000}, []uint32{first.Duration, second.Duration, stalled.Duration})
+	// The stall belongs to the gap before the frame, not to the frame itself.
+	require.Equal(t, []uint32{3600, 3600, 3600}, []uint32{first.Duration, second.Duration, stalled.Duration})
 
-	// A frame stamped before its predecessor cannot be placed on the timeline.
-	require.Nil(t, m.GetPayload(0, &rtp.Packet{Header: rtp.Header{Timestamp: start}, Payload: []byte{0xFF, 0xD8, 0xFF, 0xD9}}))
+	// A wall clock stepping back continues the timeline rather than dropping frames.
+	stepped := demux(start)
+	require.Equal(t, stalled.DecodeTime+3600, stepped.DecodeTime)
+}
+
+func TestJPEGContentType(t *testing.T) {
+	require.Equal(t, `video/mp4; codecs="jpeg"`, ContentType([]*core.Codec{{Name: core.CodecJPEG}}))
 }

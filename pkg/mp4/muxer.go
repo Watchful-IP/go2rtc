@@ -19,14 +19,19 @@ type Muxer struct {
 	timingClock uint32
 	timingID    uint32
 	timingBase  uint64
-	jpegSeen    []bool
+	jpeg        []jpegClock
+}
+
+type jpegClock struct {
+	seen     bool
+	interval uint32
 }
 
 func (m *Muxer) AddTrack(codec *core.Codec) {
 	m.dts = append(m.dts, 0)
 	m.pts = append(m.pts, 0)
 	m.codecs = append(m.codecs, codec)
-	m.jpegSeen = append(m.jpegSeen, false)
+	m.jpeg = append(m.jpeg, jpegClock{})
 }
 
 func (m *Muxer) GetInit() ([]byte, error) {
@@ -126,7 +131,7 @@ func (m *Muxer) Reset() {
 	for i := range m.dts {
 		m.dts[i] = 0
 		m.pts[i] = 0
-		m.jpegSeen[i] = false
+		m.jpeg[i] = jpegClock{}
 	}
 }
 
@@ -223,30 +228,36 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 	return mv.Bytes()
 }
 
-// jpegPayload places each JPEG at its source timestamp. Multipart JPEG has no media clock,
-// so the producer's receive time is the only timeline; unlike the generic path, gaps longer
-// than a second are kept rather than collapsed, and a frame starts when it arrived.
+// jpegPayload places each JPEG at its receive time. Multipart JPEG has no media clock,
+// so receive time is the only timeline; unlike the generic path, gaps longer than a
+// second are kept rather than collapsed, and a frame starts when it arrived.
 func (m *Muxer) jpegPayload(trackID byte, packet *rtp.Packet) []byte {
 	codec := m.codecs[trackID]
+	clock := &m.jpeg[trackID]
+	if clock.interval == 0 {
+		clock.interval = codec.ClockRate / 25
+	}
 	decodeTime := m.dts[trackID]
-	duration := codec.ClockRate / 25
-	if m.jpegSeen[trackID] {
+	if clock.seen {
 		// uint32 subtraction survives the 90 kHz clock wrapping every ~13 hours.
 		delta := packet.Timestamp - m.pts[trackID]
 		if int32(delta) <= 0 {
-			return nil
+			// The wall clock stepped back: continue from the last frame instead of
+			// dropping frames until the clock catches up.
+			delta = clock.interval
+		} else if delta <= codec.ClockRate {
+			clock.interval = delta
 		}
 		decodeTime += uint64(delta)
-		// The next frame's tfdt ends this one; the last interval is the best estimate.
-		duration = delta
 	}
-	m.jpegSeen[trackID] = true
+	clock.seen = true
 	m.pts[trackID] = packet.Timestamp
 	m.dts[trackID] = decodeTime
 
+	// The next frame's tfdt ends this one. A preceding stall is not this frame's duration.
 	size := len(packet.Payload)
 	mv := iso.NewMovie(1024 + size)
-	mv.WriteMovieFragment(m.index, uint32(trackID+1), duration, uint32(size), iso.SampleVideoIFrame, decodeTime, 0)
+	mv.WriteMovieFragment(m.index, uint32(trackID+1), clock.interval, uint32(size), iso.SampleVideoIFrame, decodeTime, 0)
 	mv.WriteData(packet.Payload)
 	return mv.Bytes()
 }
