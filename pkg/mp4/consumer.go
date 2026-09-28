@@ -10,6 +10,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/h264"
 	"github.com/AlexxIT/go2rtc/pkg/h265"
+	"github.com/AlexxIT/go2rtc/pkg/mjpeg"
 	"github.com/AlexxIT/go2rtc/pkg/pcm"
 	"github.com/pion/rtp"
 )
@@ -102,6 +103,13 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 			handler.Handler = h265.RTPDepay(track.Codec, handler.Handler)
 		} else {
 			handler.Handler = h265.RepairAVCC(track.Codec, handler.Handler)
+		}
+
+	case core.CodecJPEG:
+		handler.Handler = func(packet *rtp.Packet) { c.writePacket(trackID, packet, true, true) }
+
+		if track.Codec.IsRTP() {
+			handler.Handler = mjpeg.RTPDepay(handler.Handler)
 		}
 
 	default:
