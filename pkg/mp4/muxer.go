@@ -2,6 +2,7 @@ package mp4
 
 import (
 	"encoding/hex"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/h264"
@@ -19,12 +20,23 @@ type Muxer struct {
 	timingClock uint32
 	timingID    uint32
 	timingBase  uint64
+	jpeg        []jpegClock
+	now         func() time.Duration // monotonic; nil uses the process clock
 }
+
+type jpegClock struct {
+	seen     bool
+	interval uint32
+	at       time.Duration
+}
+
+var processStart = time.Now()
 
 func (m *Muxer) AddTrack(codec *core.Codec) {
 	m.dts = append(m.dts, 0)
 	m.pts = append(m.pts, 0)
 	m.codecs = append(m.codecs, codec)
+	m.jpeg = append(m.jpeg, jpegClock{})
 }
 
 func (m *Muxer) GetInit() ([]byte, error) {
@@ -85,6 +97,10 @@ func (m *Muxer) GetInit() ([]byte, error) {
 				uint32(i+1), codec.Name, codec.ClockRate, width, height, h265.EncodeConfig(vps, sps, pps),
 			)
 
+		case core.CodecJPEG:
+			// Dimensions come from each frame's SOF; players and FFmpeg read those.
+			mv.WriteVideoTrack(uint32(i+1), codec.Name, codec.ClockRate, 0, 0, nil)
+
 		case core.CodecAAC:
 			s := core.Between(codec.FmtpLine, "config=", ";")
 			b, err := hex.DecodeString(s)
@@ -120,6 +136,7 @@ func (m *Muxer) Reset() {
 	for i := range m.dts {
 		m.dts[i] = 0
 		m.pts[i] = 0
+		m.jpeg[i] = jpegClock{}
 	}
 }
 
@@ -127,6 +144,10 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 	codec := m.codecs[trackID]
 
 	m.index++
+
+	if codec.Name == core.CodecJPEG {
+		return m.jpegPayload(trackID, packet)
+	}
 
 	timing, timed := core.GetSampleTiming(packet)
 	duration := packet.Timestamp - m.pts[trackID]
@@ -210,4 +231,55 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 	m.dts[trackID] = decodeTime + uint64(duration)
 
 	return mv.Bytes()
+}
+
+// jpegPayload places each JPEG on its source clock: go2rtc's receive time for multipart
+// JPEG, the camera's RTP clock for RTP JPEG. Unlike the generic path, gaps longer than a
+// second are kept rather than collapsed, and a frame starts when it arrived.
+func (m *Muxer) jpegPayload(trackID byte, packet *rtp.Packet) []byte {
+	codec := m.codecs[trackID]
+	clock := &m.jpeg[trackID]
+	nominal := codec.ClockRate / 25
+	now := time.Since(processStart)
+	if m.now != nil {
+		now = m.now()
+	}
+	decodeTime := m.dts[trackID]
+	if clock.seen {
+		delta := jpegDelta(packet.Timestamp-m.pts[trackID], now-clock.at, codec.ClockRate)
+		decodeTime += delta
+		clock.interval = uint32(min(delta, uint64(nominal)))
+	} else {
+		clock.interval = nominal
+	}
+	clock.seen = true
+	clock.at = now
+	m.pts[trackID] = packet.Timestamp
+	m.dts[trackID] = decodeTime
+
+	// The next frame's tfdt ends this one. Capping the duration keeps a stall out of
+	// the frame after it, which would otherwise overlap the frames that follow.
+	size := len(packet.Payload)
+	mv := iso.NewMovie(1024 + size)
+	mv.WriteMovieFragment(m.index, uint32(trackID+1), clock.interval, uint32(size), iso.SampleVideoIFrame, decodeTime, 0)
+	mv.WriteData(packet.Payload)
+	return mv.Bytes()
+}
+
+// jpegResetSkew is how far the source clock may disagree with the muxer's own clock.
+// Queueing shifts consecutive frames by far less; a reset source clock is almost always
+// hours out.
+const jpegResetSkew = time.Minute
+
+// jpegDelta unwraps a 32-bit source-clock interval using the time the muxer waited, so
+// wraps and gaps longer than half the clock range survive. When the source clock was
+// reset (an RTP reconnect or a wall clock step), the muxer's elapsed time stands in.
+func jpegDelta(raw uint32, waited time.Duration, clockRate uint32) uint64 {
+	elapsed := int64(waited) * int64(clockRate) / int64(time.Second)
+	delta := int64(raw) + (elapsed-int64(raw)+1<<31)>>32<<32
+	skew := int64(jpegResetSkew) * int64(clockRate) / int64(time.Second)
+	if delta <= 0 || delta-elapsed > skew || elapsed-delta > skew {
+		delta = max(elapsed, 1)
+	}
+	return uint64(delta)
 }

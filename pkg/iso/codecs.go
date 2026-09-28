@@ -12,6 +12,8 @@ func (m *Movie) WriteVideo(codec string, width, height uint16, conf []byte) {
 		m.StartAtom("avc1")
 	case core.CodecH265:
 		m.StartAtom("hev1")
+	case core.CodecJPEG:
+		m.StartAtom("jpeg")
 	default:
 		panic("unsupported iso video: " + codec)
 	}
@@ -38,8 +40,10 @@ func (m *Movie) WriteVideo(codec string, width, height uint16, conf []byte) {
 	case core.CodecH265:
 		m.StartAtom("hvcC")
 	}
-	m.Write(conf)
-	m.EndAtom() // AVCC
+	if codec != core.CodecJPEG {
+		m.Write(conf)
+		m.EndAtom() // AVCC
+	}
 
 	m.StartAtom("pasp") // Pixel Aspect Ratio
 	m.WriteUint32(1)    // hSpacing
