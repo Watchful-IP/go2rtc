@@ -37,6 +37,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 | Native fMP4/CMAF HLS ingest | fork-only, W-963 | H.264/HEVC/AAC, AES-128, bounded multi-track demuxing; [evidence and limits](pkg/hls/README.md) |
 | streams: lock the API map access | streams half of [#2444](https://github.com/AlexxIT/go2rtc/pull/2444) | Concurrent `DELETE /api/streams` crashed the process (`concurrent map writes`); upstream closed the PR over its unrelated `app.Info` half |
 | mp4: JPEG track on `stream.mp4?video=jpeg` | fork-only | Multipart JPEG output drops frame timestamps, so a lagging recorder stamped stale frames on arrival and stored slow motion. The fMP4 track keeps each frame's source clock (receive time for multipart, RTP clock for RTP JPEG), including gaps over one second and source clock resets |
+| Native Milestone XProtect source (`milestone://`) | fork-only | Live and recorded playback straight from the Recording Server over ImageServer, without the Mobile Server, extra streams or transcoding; B-frame reordering and recorder-side JPEG for codecs browsers cannot show. [Details](pkg/milestone/README.md) |
 
 ## Adding a patch
 
