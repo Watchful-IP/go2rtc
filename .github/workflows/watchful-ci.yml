@@ -28,7 +28,7 @@ jobs:
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./internal/http/... ./internal/rtsp/... ./internal/streams/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./pkg/milestone/... ./internal/http/... ./internal/milestone/... ./internal/rtsp/... ./internal/streams/...
 
       # Every package except the ones already broken at the upstream release tag
       # (stale test expectations in internal/ffmpeg and pkg/hap/tlv8; tests that no
