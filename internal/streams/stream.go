@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
@@ -14,20 +13,9 @@ type Stream struct {
 	consumers []core.Consumer
 	mu        sync.Mutex
 	pending   atomic.Int32
-
-	audit         atomic.Pointer[auditIdentity]
-	consumerSince map[core.Consumer]time.Time
 }
 
 func NewStream(source any) *Stream {
-	s := newStream(source)
-	for _, prod := range s.producers {
-		prod.stream = s
-	}
-	return s
-}
-
-func newStream(source any) *Stream {
 	switch source := source.(type) {
 	case string:
 		return &Stream{
@@ -51,7 +39,7 @@ func newStream(source any) *Stream {
 		}
 		return s
 	case map[string]any:
-		return newStream(source["url"])
+		return NewStream(source["url"])
 	case nil:
 		return new(Stream)
 	default:
@@ -80,10 +68,6 @@ func (s *Stream) RemoveConsumer(cons core.Consumer) {
 	for i, consumer := range s.consumers {
 		if consumer == cons {
 			s.consumers = append(s.consumers[:i], s.consumers[i+1:]...)
-			s.auditConsumer("consumer_remove", cons).
-				Int64("open_ms", time.Since(s.consumerSince[cons]).Milliseconds()).
-				Msg(auditMessage)
-			delete(s.consumerSince, cons)
 			break
 		}
 	}
@@ -93,7 +77,7 @@ func (s *Stream) RemoveConsumer(cons core.Consumer) {
 }
 
 func (s *Stream) AddProducer(prod core.Producer) {
-	producer := &Producer{conn: prod, state: stateExternal, url: "external", stream: s}
+	producer := &Producer{conn: prod, state: stateExternal, url: "external"}
 	s.mu.Lock()
 	s.producers = append(s.producers, producer)
 	s.mu.Unlock()

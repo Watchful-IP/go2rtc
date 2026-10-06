@@ -3,7 +3,6 @@ package streams
 import (
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
@@ -100,18 +99,11 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 	}
 
 	if len(prodStarts) == 0 {
-		err = formatError(consMedias, prodMedias, prodErrors)
-		s.auditConsumer("consumer_add", cons).Str("outcome", "error").Str("error", redactErr(err)).Msg(auditMessage)
-		return err
+		return formatError(consMedias, prodMedias, prodErrors)
 	}
 
 	s.mu.Lock()
 	s.consumers = append(s.consumers, cons)
-	if s.consumerSince == nil {
-		s.consumerSince = map[core.Consumer]time.Time{}
-	}
-	s.consumerSince[cons] = time.Now()
-	s.auditConsumer("consumer_add", cons).Str("outcome", "added").Msg(auditMessage)
 	s.mu.Unlock()
 
 	// there may be duplicates, but that's not a problem

@@ -34,11 +34,6 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
-
-	// Watchful: stream-audit context
-	stream   *Stream
-	dials    int
-	openedAt time.Time
 }
 
 const SourceTemplate = "{input}"
@@ -64,7 +59,7 @@ func (p *Producer) Dial() error {
 	defer p.mu.Unlock()
 
 	if p.state == stateNone {
-		conn, err := p.auditDial("consumer", 0)
+		conn, err := dialProducer(p.url)
 		if err != nil {
 			return err
 		}
@@ -154,7 +149,7 @@ func (p *Producer) start() {
 		return
 	}
 
-	log.Debug().Msgf("[streams] start producer url=%s", RedactURL(p.url))
+	log.Debug().Msgf("[streams] start producer url=%s", p.url)
 
 	p.state = stateStart
 	p.workerID++
@@ -163,25 +158,17 @@ func (p *Producer) start() {
 }
 
 func (p *Producer) worker(conn core.Producer, workerID int) {
-	err := conn.Start()
+	if err := conn.Start(); err != nil {
+		p.mu.Lock()
+		closed := p.workerID != workerID
+		p.mu.Unlock()
 
-	p.mu.Lock()
-	closed := p.workerID != workerID
-	if !closed {
-		reason := "eof"
-		if err != nil {
-			reason = "error"
+		if closed {
+			return
 		}
-		p.auditClose(reason, err)
-	}
-	p.mu.Unlock()
 
-	if closed {
-		return
-	}
-
-	if err != nil {
-		log.Warn().Str("error", redactErr(err)).Str("url", RedactURL(p.url)).Caller().Send()
+		proto, host := sourceHost(p.url)
+		log.Warn().Err(err).Str("proto", proto).Str("host", host).Caller().Send()
 	}
 
 	if finite, ok := conn.(core.FiniteProducer); ok && finite.IsFinite() {
@@ -195,15 +182,15 @@ func (p *Producer) reconnect(workerID, retry int) {
 	defer p.mu.Unlock()
 
 	if p.workerID != workerID {
-		log.Trace().Msgf("[streams] stop reconnect url=%s", RedactURL(p.url))
+		log.Trace().Msgf("[streams] stop reconnect url=%s", p.url)
 		return
 	}
 
-	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, RedactURL(p.url))
+	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, p.url)
 
-	conn, err := p.auditDial("reconnect", retry)
+	conn, err := dialProducer(p.url)
 	if err != nil {
-		log.Debug().Msgf("[streams] producer=%s", redactErr(err))
+		log.Debug().Msgf("[streams] producer=%s", err)
 
 		timeout := time.Minute
 		if retry < 5 {
@@ -259,6 +246,38 @@ func (p *Producer) reconnect(workerID, retry int) {
 	go p.worker(conn, workerID)
 }
 
+// Watchful: log every upstream connection attempt, including reconnects. Only
+// protocol and host are logged; source URLs carry credentials and tokens.
+func dialProducer(url string) (core.Producer, error) {
+	conn, err := GetProducer(url)
+	proto, host := sourceHost(url)
+	log.Info().Str("proto", proto).Str("host", host).Bool("ok", err == nil).Msg("[streams] dial")
+	return conn, err
+}
+
+// sourceHost returns the scheme and host[:port] of the innermost URL in a source,
+// e.g. ffmpeg:rtsp://user:pass@cam:554/x#video=copy -> ("rtsp", "cam:554").
+func sourceHost(source string) (proto, host string) {
+	i := strings.LastIndex(source, "://")
+	if i < 0 {
+		proto, _, _ = strings.Cut(source, ":")
+		return proto, ""
+	}
+	proto = source[strings.LastIndexAny(source[:i], ": ")+1 : i]
+	host = source[i+3:]
+	if j := strings.IndexAny(host, " ?#"); j >= 0 {
+		host = host[:j]
+	}
+	// strip userinfo first, so a '/' inside a password can't end the host early
+	if j := strings.LastIndexByte(host, '@'); j >= 0 {
+		host = host[j+1:]
+	}
+	if j := strings.IndexByte(host, '/'); j >= 0 {
+		host = host[:j]
+	}
+	return proto, host
+}
+
 func (p *Producer) stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -274,10 +293,9 @@ func (p *Producer) stop() {
 		p.workerID++
 	}
 
-	log.Debug().Msgf("[streams] stop producer url=%s", RedactURL(p.url))
+	log.Debug().Msgf("[streams] stop producer url=%s", p.url)
 
 	if p.conn != nil {
-		p.auditClose("no_consumers", nil)
 		_ = p.conn.Stop()
 		p.conn = nil
 	}

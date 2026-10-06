@@ -24,7 +24,6 @@ func Init() {
 
 	for name, item := range cfg.Streams {
 		streams[name] = NewStream(item)
-		streams[name].setAuditIdentity(name, nil)
 	}
 
 	api.HandleFunc("api/streams", apiStreams)
@@ -63,7 +62,6 @@ func New(name string, sources ...string) (*Stream, error) {
 	}
 
 	stream := NewStream(sources)
-	stream.setAuditIdentity(name, nil)
 
 	streamsMu.Lock()
 	streams[name] = stream
@@ -113,7 +111,6 @@ func Patch(name string, source string) (*Stream, error) {
 
 	// create new stream with this name
 	stream := NewStream(source)
-	stream.setAuditIdentity(name, nil)
 	streams[name] = stream
 	return stream, nil
 }
