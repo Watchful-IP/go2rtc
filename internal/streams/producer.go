@@ -59,7 +59,7 @@ func (p *Producer) Dial() error {
 	defer p.mu.Unlock()
 
 	if p.state == stateNone {
-		conn, err := GetProducer(p.url)
+		conn, err := dialProducer(p.url)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,8 @@ func (p *Producer) worker(conn core.Producer, workerID int) {
 			return
 		}
 
-		log.Warn().Err(err).Str("url", p.url).Caller().Send()
+		proto, host := sourceHost(p.url)
+		log.Warn().Err(err).Str("proto", proto).Str("host", host).Caller().Send()
 	}
 
 	if finite, ok := conn.(core.FiniteProducer); ok && finite.IsFinite() {
@@ -187,7 +188,7 @@ func (p *Producer) reconnect(workerID, retry int) {
 
 	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, p.url)
 
-	conn, err := GetProducer(p.url)
+	conn, err := dialProducer(p.url)
 	if err != nil {
 		log.Debug().Msgf("[streams] producer=%s", err)
 
@@ -243,6 +244,38 @@ func (p *Producer) reconnect(workerID, retry int) {
 	p.conn = conn
 
 	go p.worker(conn, workerID)
+}
+
+// Watchful: log every upstream connection attempt, including reconnects. Only
+// protocol and host are logged; source URLs carry credentials and tokens.
+func dialProducer(url string) (core.Producer, error) {
+	conn, err := GetProducer(url)
+	proto, host := sourceHost(url)
+	log.Info().Str("proto", proto).Str("host", host).Bool("ok", err == nil).Msg("[streams] dial")
+	return conn, err
+}
+
+// sourceHost returns the scheme and host[:port] of the innermost URL in a source,
+// e.g. ffmpeg:rtsp://user:pass@cam:554/x#video=copy -> ("rtsp", "cam:554").
+func sourceHost(source string) (proto, host string) {
+	i := strings.LastIndex(source, "://")
+	if i < 0 {
+		proto, _, _ = strings.Cut(source, ":")
+		return proto, ""
+	}
+	proto = source[strings.LastIndexAny(source[:i], ": ")+1 : i]
+	host = source[i+3:]
+	if j := strings.IndexAny(host, " ?#"); j >= 0 {
+		host = host[:j]
+	}
+	// strip userinfo first, so a '/' inside a password can't end the host early
+	if j := strings.LastIndexByte(host, '@'); j >= 0 {
+		host = host[j+1:]
+	}
+	if j := strings.IndexByte(host, '/'); j >= 0 {
+		host = host[:j]
+	}
+	return proto, host
 }
 
 func (p *Producer) stop() {
