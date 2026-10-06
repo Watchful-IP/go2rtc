@@ -52,10 +52,12 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 			name = src
 		}
 
-		if _, err := New(name, query["src"]...); err != nil {
+		stream, err := New(name, query["src"]...)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		stream.SetAuditMeta(ParseAuditMeta(query))
 
 		if err := app.PatchConfig([]string{"streams", name}, query["src"]); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -69,8 +71,10 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// support {input} templates: https://github.com/AlexxIT/go2rtc#module-hass
-		if _, err := Patch(name, src); err != nil {
+		if stream, err := Patch(name, src); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			stream.SetAuditMeta(ParseAuditMeta(query))
 		}
 
 	case "POST":

@@ -34,6 +34,11 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
+
+	// Watchful: stream-audit context
+	stream   *Stream
+	dials    int
+	openedAt time.Time
 }
 
 const SourceTemplate = "{input}"
@@ -59,7 +64,7 @@ func (p *Producer) Dial() error {
 	defer p.mu.Unlock()
 
 	if p.state == stateNone {
-		conn, err := GetProducer(p.url)
+		conn, err := p.auditDial("consumer", 0)
 		if err != nil {
 			return err
 		}
@@ -149,7 +154,7 @@ func (p *Producer) start() {
 		return
 	}
 
-	log.Debug().Msgf("[streams] start producer url=%s", p.url)
+	log.Debug().Msgf("[streams] start producer url=%s", RedactURL(p.url))
 
 	p.state = stateStart
 	p.workerID++
@@ -158,16 +163,25 @@ func (p *Producer) start() {
 }
 
 func (p *Producer) worker(conn core.Producer, workerID int) {
-	if err := conn.Start(); err != nil {
-		p.mu.Lock()
-		closed := p.workerID != workerID
-		p.mu.Unlock()
+	err := conn.Start()
 
-		if closed {
-			return
+	p.mu.Lock()
+	closed := p.workerID != workerID
+	if !closed {
+		reason := "eof"
+		if err != nil {
+			reason = "error"
 		}
+		p.auditClose(reason, err)
+	}
+	p.mu.Unlock()
 
-		log.Warn().Err(err).Str("url", p.url).Caller().Send()
+	if closed {
+		return
+	}
+
+	if err != nil {
+		log.Warn().Str("error", redactErr(err)).Str("url", RedactURL(p.url)).Caller().Send()
 	}
 
 	if finite, ok := conn.(core.FiniteProducer); ok && finite.IsFinite() {
@@ -181,15 +195,15 @@ func (p *Producer) reconnect(workerID, retry int) {
 	defer p.mu.Unlock()
 
 	if p.workerID != workerID {
-		log.Trace().Msgf("[streams] stop reconnect url=%s", p.url)
+		log.Trace().Msgf("[streams] stop reconnect url=%s", RedactURL(p.url))
 		return
 	}
 
-	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, p.url)
+	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, RedactURL(p.url))
 
-	conn, err := GetProducer(p.url)
+	conn, err := p.auditDial("reconnect", retry)
 	if err != nil {
-		log.Debug().Msgf("[streams] producer=%s", err)
+		log.Debug().Msgf("[streams] producer=%s", redactErr(err))
 
 		timeout := time.Minute
 		if retry < 5 {
@@ -260,9 +274,10 @@ func (p *Producer) stop() {
 		p.workerID++
 	}
 
-	log.Debug().Msgf("[streams] stop producer url=%s", p.url)
+	log.Debug().Msgf("[streams] stop producer url=%s", RedactURL(p.url))
 
 	if p.conn != nil {
+		p.auditClose("no_consumers", nil)
 		_ = p.conn.Stop()
 		p.conn = nil
 	}
