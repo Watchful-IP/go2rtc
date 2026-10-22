@@ -54,7 +54,7 @@ import (
 
 func main() {
 	// version will be set later from -buildvcs info, this used only as fallback
-	app.Version = "1.9.14-watchful.7"
+	app.Version = "1.9.14-watchful.8"
 
 	type module struct {
 		name string
