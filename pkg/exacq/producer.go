@@ -341,7 +341,7 @@ func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error
 		if !p.cursor.Before(p.source.End) {
 			return nil, errPlaybackEnd
 		}
-		end := p.cursor.Add(10 * time.Second)
+		end := p.cursor.Add(native.SearchSpan(p.stream.Format))
 		if end.After(p.source.End) {
 			end = p.source.End
 		}
@@ -400,6 +400,10 @@ func (p *Producer) dropRepeated(frames []*native.MediaPacket) []*native.MediaPac
 }
 
 func videoCodec(format uint32, avcc []byte) *core.Codec {
+	if format == native.FormatJPEG {
+		// Each picture is a complete JPEG, as go2rtc's other JPEG sources produce.
+		return &core.Codec{Name: core.CodecJPEG, ClockRate: 90000, PayloadType: core.PayloadTypeRAW}
+	}
 	if format == 5 {
 		return h264.AVCCToCodec(avcc)
 	}

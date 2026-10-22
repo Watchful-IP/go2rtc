@@ -34,12 +34,16 @@ func TestLowestStream(t *testing.T) {
 		{ID: 104, ParentCameraID: 101, Format: 0, Width: 160, Height: 90, Enabled: true},
 		{ID: 201, ParentCameraID: 201, Format: 0, Width: 640, Height: 360, Enabled: true},
 		{ID: 301, ParentCameraID: 301, Format: 5, Width: 640, Height: 360, Enabled: false},
+		{ID: 401, ParentCameraID: 401, Format: 3, Width: 640, Height: 360, Enabled: true},
 	}}
 	streams, err := streamCandidates(inventory, &Source{Camera: 101, SelectLowest: true})
 	stream := streams[0]
 	require.NoError(t, err)
-	require.Equal(t, uint32(102), stream.ID, "smallest enabled H.264/H.265 stream")
-	for camera, code := range map[uint32]native.Code{201: native.CodeUnsupportedCodec, 301: native.CodeStreamUnavailable, 999: native.CodeCameraNotFound} {
+	require.Equal(t, uint32(102), stream.ID, "smallest enabled H.264/H.265 stream, preferred over a smaller JPEG")
+	streams, err = streamCandidates(inventory, &Source{Camera: 201, SelectLowest: true})
+	require.NoError(t, err)
+	require.Equal(t, native.FormatJPEG, streams[0].Format, "a JPEG-only camera plays JPEG")
+	for camera, code := range map[uint32]native.Code{401: native.CodeUnsupportedCodec, 301: native.CodeStreamUnavailable, 999: native.CodeCameraNotFound} {
 		_, err = streamCandidates(inventory, &Source{Camera: camera, SelectLowest: true})
 		var typed *native.Error
 		require.True(t, errors.As(err, &typed))
