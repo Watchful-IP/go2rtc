@@ -64,7 +64,7 @@ func New(name string, sources ...string) (*Stream, error) {
 	stream := NewStream(sources)
 
 	streamsMu.Lock()
-	streams[name] = stream
+	streams[resolveNameLocked(name)] = stream
 	streamsMu.Unlock()
 
 	return stream, nil
@@ -74,9 +74,12 @@ func Patch(name string, source string) (*Stream, error) {
 	streamsMu.Lock()
 	defer streamsMu.Unlock()
 
+	name = resolveNameLocked(name)
+	source = resolveNameLocked(source)
+
 	// check if source links to some stream name from go2rtc
 	if u, err := url.Parse(source); err == nil && u.Scheme == "rtsp" && len(u.Path) > 1 {
-		rtspName := u.Path[1:]
+		rtspName := resolveNameLocked(u.Path[1:])
 		if stream, ok := streams[rtspName]; ok {
 			if streams[name] != stream {
 				// link (alias) streams[name] to streams[rtspName]
@@ -146,13 +149,15 @@ var streamsMu sync.Mutex
 func Get(name string) *Stream {
 	streamsMu.Lock()
 	defer streamsMu.Unlock()
-	return streams[name]
+	return streams[resolveNameLocked(name)]
 }
 
 func Delete(name string) {
 	streamsMu.Lock()
 	defer streamsMu.Unlock()
+	name = resolveNameLocked(name)
 	delete(streams, name)
+	forgetPublicNameLocked(name)
 }
 
 func GetAll() map[string]*Stream {
@@ -161,7 +166,7 @@ func GetAll() map[string]*Stream {
 
 	all := make(map[string]*Stream, len(streams))
 	for name, stream := range streams {
-		all[name] = stream
+		all[publicNameLocked(name)] = stream
 	}
 	return all
 }
@@ -170,7 +175,7 @@ func GetAllNames() []string {
 	streamsMu.Lock()
 	names := make([]string, 0, len(streams))
 	for name := range streams {
-		names = append(names, name)
+		names = append(names, publicNameLocked(name))
 	}
 	streamsMu.Unlock()
 	return names
@@ -180,7 +185,7 @@ func GetAllSources() map[string][]string {
 	streamsMu.Lock()
 	sources := make(map[string][]string, len(streams))
 	for name, stream := range streams {
-		sources[name] = stream.Sources()
+		sources[publicNameLocked(name)] = stream.Sources()
 	}
 	streamsMu.Unlock()
 	return sources

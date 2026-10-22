@@ -1,0 +1,48 @@
+<?xml version='1.0' encoding='utf-8'?>
+<eDVR>
+  <Memory Throttling="0" />
+  <Storage RecordingMbps="8.177751" ID="327680">
+    <Drive SizeGB="38" FreeGB="30" Alarm="0" />
+  </Storage>
+  <Devices ID="458752">
+    <Device Number="2">
+      <Video>
+        <Input Number="0" RecordIdle="0" Time="1792543124" Milliseconds="837" />
+        <Input Number="0" Motion="1" Time="1792543194" Milliseconds="752" Context="0" />
+      </Video>
+      <Codec>
+        <Encoder Number="0">
+          <Channel Number="0" Connected="1" Time="1792527145" Milliseconds="0" />
+        </Encoder>
+      </Codec>
+    </Device>
+    <Device Number="3" Connected="1">
+      <Video>
+        <Input Number="0" Motion="0" Time="1792464976" Milliseconds="703" Context="0" />
+      </Video>
+    </Device>
+    <Device Number="4">
+      <Video>
+        <Input Number="0" RecordIdle="0" Time="1792543128" Milliseconds="132" />
+        <Input Number="0" Motion="0" Time="1792543308" Milliseconds="581" Context="0" />
+      </Video>
+      <Codec>
+        <Encoder Number="0">
+          <Channel Number="0" Connected="1" Time="1792543128" Milliseconds="0" />
+        </Encoder>
+      </Codec>
+    </Device>
+  </Devices>
+  <Devices ID="4784128">
+    <Device Number="2" Connected="1">
+      <Video>
+        <Input Number="0" RecordIdle="0" Time="1792543124" Milliseconds="772" />
+      </Video>
+      <Codec>
+        <Encoder Number="0">
+          <Channel Number="0" Connected="1" Time="1792543073" Milliseconds="0" />
+        </Encoder>
+      </Codec>
+    </Device>
+  </Devices>
+</eDVR>

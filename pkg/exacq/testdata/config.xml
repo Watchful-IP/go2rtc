@@ -1,0 +1,178 @@
+<?xml version='1.0' encoding='utf-8'?>
+<eDVR>
+  <Modules>
+    <Module Name="StreamPI" ID="393216" />
+    <Module Name="LogPI" ID="524288" />
+    <Module Name="failbackpi" ID="5505024" />
+    <Module Name="POSPI" ID="917504" />
+    <Module Name="ArchivePI" ID="3735552" />
+    <Module Name="SysMgmtPI" ID="3604480" />
+    <Module Name="ACTiPI" ID="1441792" />
+    <Module Name="ArecontPI" ID="1572864" />
+    <Module Name="axisbwpi" ID="5701632" />
+    <Module Name="AxisPI" ID="458752" />
+    <Module Name="bentelpi" ID="5177344" />
+    <Module Name="boschsecpi" ID="5242880" />
+    <Module Name="brivopi" ID="5832704" />
+    <Module Name="CanonPI" ID="2424832" />
+    <Module Name="ccurepi" ID="5439488" />
+    <Module Name="DahuaPI" ID="4784128" />
+    <Module Name="DiscoveryPI" ID="4980736" />
+    <Module Name="dmppi" ID="5373952" />
+    <Module Name="EventPI" ID="655360" />
+    <Module Name="ExportPI" ID="983040" />
+    <Module Name="GanzPixelProPI" ID="4325376" />
+    <Module Name="GroupsPI" ID="720896" />
+    <Module Name="HikVisionPI" ID="3473408" />
+    <Module Name="honeywellpi" ID="5111808" />
+    <Module Name="illustra3PI" ID="4587520" />
+    <Module Name="illustramultipi" ID="5898240" />
+    <Module Name="IPCamDetectPI" ID="1507328" />
+    <Module Name="IQeyePI" ID="1114112" />
+    <Module Name="itv2pi" ID="4915200" />
+    <Module Name="kantechpi" ID="4849664" />
+    <Module Name="napcopi" ID="5767168" />
+    <Module Name="NotifyPI" ID="786432" />
+    <Module Name="nvrsdkpi" ID="131072" />
+    <Module Name="onvifnvcPI" ID="1703936" />
+    <Module Name="PanasonicPI" ID="1376256" />
+    <Module Name="PelcoPI" ID="3276800" />
+    <Module Name="PSFPI" ID="327680" />
+    <Module Name="PTZPI" ID="1048576" />
+    <Module Name="RtspPI" ID="3145728" />
+    <Module Name="rtspserverpi" ID="5570560" />
+    <Module Name="SamsungPI" ID="4259840" />
+    <Module Name="SerialPI" ID="851968" />
+    <Module Name="SonyPI" ID="1179648" />
+    <Module Name="SoftTriggerPI" ID="2097152" />
+    <Module Name="SoundPI" ID="1310720" />
+    <Module Name="tycodlpi" ID="5636096" />
+    <Module Name="UpdatePI" ID="3670016" />
+    <Module Name="UsbdioPI" ID="4390912" />
+    <Module Name="RemotePI" ID="589824" />
+    <Module Name="VivotekPI" ID="1638400" />
+    <Module ID="-2147483648" Name="Core" />
+    <Module ID="1" Name="analyticpi" />
+  </Modules>
+  <Servers>
+    <Server Model="unknown" Description="Sanitized lab recorder">
+      <TimeServer Enabled="0" Supported="1" />
+      <Time UTCTime="1792542916" Uptime="1792462914" />
+    </Server>
+  </Servers>
+  <Devices ID="458752" Description="AXIS VAPIX">
+    <Device Number="2" Enabled="1" Name="Lab camera">
+      <Audio>
+        <Input Number="0" Name="Lab input" />
+        <Input Number="1" Name="Lab input" Output="1" />
+      </Audio>
+      <Video>
+        <Input Number="0" Name="Lab camera" />
+      </Video>
+      <Codec>
+        <Encoder Number="0">
+          <Channel Number="0" Enabled="1" Width="1920" Height="1080" Standard="5" Framerate="15" ID="459264" />
+          <AudioChannel Number="0" Enabled="0" Standard="4" SampleRate="48000" ID="459280" />
+          <AudioChannel Number="1" Enabled="0" Standard="0" SampleRate="8000" ID="459281" />
+        </Encoder>
+      </Codec>
+      <Context Number="1">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="2">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="3">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="4">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="5">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="6">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="7">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+    </Device>
+    <Device Number="3" Enabled="1" Name="Lab speaker">
+      <Audio>
+        <Input Number="0" Name="Lab input" />
+        <Input Number="1" Name="Lab input" Output="1" />
+      </Audio>
+      <Video />
+      <Codec>
+        <Encoder Number="0">
+          <AudioChannel Number="0" Enabled="1" Standard="4" SampleRate="48000" ID="459536" />
+          <AudioChannel Number="1" Enabled="0" Standard="0" SampleRate="8000" ID="459537" />
+        </Encoder>
+      </Codec>
+      <Context Number="1">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="2">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="3">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="4">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="5">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="6">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+      <Context Number="7">
+        <Codec>
+          <Encoder Number="0" />
+        </Codec>
+        <Video />
+      </Context>
+    </Device>
+  </Devices>
+</eDVR>

@@ -52,6 +52,8 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 			name = src
 		}
 
+		name = resolveName(name)
+
 		if _, err := New(name, query["src"]...); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -98,6 +100,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "DELETE":
+		src = resolveName(src)
 		Delete(src)
 
 		if err := app.PatchConfig([]string{"streams", src}, nil); err != nil {
@@ -115,7 +118,7 @@ func apiStreamsDOT(w http.ResponseWriter, r *http.Request) {
 	dot = append(dot, "digraph {\n"...)
 	if query.Has("src") {
 		for _, name := range query["src"] {
-			if stream := streams[name]; stream != nil {
+			if stream := Get(name); stream != nil {
 				dot = AppendDOT(dot, stream)
 			}
 		}

@@ -1,0 +1,111 @@
+{
+  "provenance": "Observed Exacq26.1 retained-session health failure; payload bytes, credentials and license keys deliberately excluded.",
+  "error": "exacq: missing or ambiguous license status",
+  "sequence": [
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 336,
+      "decodedBytes": 794
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 3168,
+      "decodedBytes": 18044,
+      "hasSystems": true,
+      "licenseCount": 1,
+      "licenseFields": [
+        "IsBadLicense",
+        "Trial",
+        "IsRestricted",
+        "Enterprise",
+        "MaxIPCameras",
+        "Expiration",
+        "Time"
+      ],
+      "deviceSections": 2
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 1616,
+      "decodedBytes": 12150
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    },
+    {
+      "phase": "license",
+      "type": 9,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 80
+    },
+    {
+      "phase": "license",
+      "type": 3,
+      "subtype": 2,
+      "status": 0,
+      "encodedBytes": 288,
+      "decodedBytes": 336
+    }
+  ],
+  "subsequentShapeObservation": {
+    "partialStatusSections": [
+      [
+        "Servers"
+      ],
+      [
+        "Analytics"
+      ],
+      [
+        "Users"
+      ]
+    ],
+    "partialStatusDeltaAttributePresent": false
+  }
+}
