@@ -175,6 +175,10 @@ func (r *Receiver) forward(packet *Packet) {
 	}
 }
 
+// MoveChildren moves src's children under dst, keeping dst's own. A bare Node
+// works as a holder for consumers between two connections.
+func MoveChildren(dst, src *Node) { appendChildren(dst, src) }
+
 // appendChildren is MoveNode without dropping the destination's own children.
 func appendChildren(dst, src *Node) {
 	src.mu.Lock()

@@ -29,7 +29,7 @@ const holdForBoundary = 250 * time.Millisecond
 
 // SwapSource replaces the source of a named stream without dropping its consumers,
 // or creates the stream when there is none yet.
-func SwapSource(name, source string, timeout time.Duration) error {
+func SwapSource(name, source string, timeout time.Duration, breakFirst bool) error {
 	if !HasProducer(source) {
 		return errInvalidSource{errors.New("streams: source not supported")}
 	}
@@ -41,7 +41,7 @@ func SwapSource(name, source string, timeout time.Duration) error {
 		_, err := Patch(name, source)
 		return err
 	}
-	return stream.Swap(source, timeout)
+	return stream.Swap(source, timeout, breakFirst)
 }
 
 type errInvalidSource struct{ error }
@@ -63,14 +63,19 @@ func swapTimeout(value string) time.Duration {
 	return 10 * time.Second
 }
 
-// Swap replaces the source of every producer in the stream.
-func (s *Stream) Swap(source string, timeout time.Duration) error {
+// Swap replaces the source of every producer in the stream. breakFirst stops the
+// old connection before dialling, for sources that accept only one connection.
+func (s *Stream) Swap(source string, timeout time.Duration, breakFirst bool) error {
 	s.mu.Lock()
 	producers := append([]*Producer(nil), s.producers...)
 	s.mu.Unlock()
 
 	for _, prod := range producers {
-		if err := prod.Swap(source, timeout); err != nil {
+		swap := prod.Swap
+		if breakFirst {
+			swap = func(source string, _ time.Duration) error { return prod.SwapBreakFirst(source) }
+		}
+		if err := swap(source, timeout); err != nil {
 			return err
 		}
 	}
@@ -156,6 +161,85 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 	proto, host := sourceHost(url)
 	log.Info().Str("proto", proto).Str("host", host).Msg("[streams] swapped source")
 	return nil
+}
+
+// SwapBreakFirst stops the old connection before dialling source. Consumers wait on
+// holders in between and resume at the new source's next keyframe. If source cannot
+// be dialled the old one is dialled again, so consumers are only dropped when both fail.
+func (p *Producer) SwapBreakFirst(source string) error {
+	p.mu.Lock()
+	url := p.resolve(source)
+	if p.state != stateStart {
+		p.url = url
+		p.mu.Unlock()
+		return nil
+	}
+	old, oldURL := p.conn, p.url
+	receivers := append([]*core.Receiver(nil), p.receivers...)
+	senders := append([]*core.Receiver(nil), p.senders...)
+	holders := make([]*core.Node, len(receivers))
+	for i, receiver := range receivers {
+		holders[i] = &core.Node{}
+		core.MoveChildren(holders[i], &receiver.Node)
+	}
+	// The old worker must not redial the connection being retired.
+	p.workerID++
+	p.mu.Unlock()
+	_ = old.Stop()
+
+	conn, err := dialProducer(url)
+	var pairs []core.CutoverPair
+	if err == nil {
+		pairs, _, err = pairTracks(conn, receivers)
+		if err != nil {
+			_ = conn.Stop()
+		}
+	}
+	swapErr := err
+	if err != nil {
+		url = oldURL
+		if conn, err = dialProducer(url); err == nil {
+			if pairs, _, err = pairTracks(conn, receivers); err != nil {
+				_ = conn.Stop()
+			}
+		}
+	}
+
+	p.mu.Lock()
+	if err != nil || p.state != stateStart {
+		p.mu.Unlock()
+		if err == nil {
+			_ = conn.Stop()
+			err = ErrSwapRaced
+		}
+		for _, holder := range holders {
+			holder.Close()
+		}
+		return err
+	}
+	for i := range pairs {
+		core.MoveChildren(&pairs[i].To.Node, holders[i])
+		// Consumers that bound to the stopped track while no connection was up.
+		core.MoveChildren(&pairs[i].To.Node, &receivers[i].Node)
+		p.receivers[i] = pairs[i].To
+	}
+	for _, media := range conn.GetMedias() {
+		if media.Direction != core.DirectionSendonly {
+			continue
+		}
+		for _, sender := range senders {
+			if codec := media.MatchCodec(sender.Codec); codec != nil {
+				_ = conn.(core.Consumer).AddTrack(media, codec, sender)
+			}
+		}
+	}
+	p.conn = conn
+	p.url = url
+	workerID := p.workerID
+	p.mu.Unlock()
+
+	go p.worker(conn, workerID)
+	return swapErr
 }
 
 // runSwapped is the worker for a connection started by Swap. It only reconnects once

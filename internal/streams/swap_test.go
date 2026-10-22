@@ -1,6 +1,7 @@
 package streams
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -128,8 +129,18 @@ func (r *recorder) trace() []string {
 }
 
 func swapRig(t *testing.T) (*Stream, *recorder, *scriptedSource, *scriptedSource) {
+	return swapRigDialling(t, nil)
+}
+
+// swapRigDialling calls dialled with each URL as it is dialled; returning an error fails that dial.
+func swapRigDialling(t *testing.T, dialled func(url string) error) (*Stream, *recorder, *scriptedSource, *scriptedSource) {
 	a, b := newScriptedSource(), newScriptedSource()
 	HandleFunc("scripted", func(url string) (core.Producer, error) {
+		if dialled != nil {
+			if err := dialled(url); err != nil {
+				return nil, err
+			}
+		}
 		if url == "scripted:b" {
 			return b, nil
 		}
@@ -149,7 +160,7 @@ func TestSwapMovesConsumersOnTheNewKeyframeAfterTheOldFrameEnds(t *testing.T) {
 	a.send(pkt(1, 1, true, pFrame...))
 
 	swapped := make(chan error, 1)
-	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second) }()
+	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second, false) }()
 	<-b.started
 
 	b.send(pkt(2, 1, true, pFrame...))                             // before any keyframe: nobody should see it
@@ -170,7 +181,7 @@ func TestSwapWithoutAKeyframeKeepsTheOldSource(t *testing.T) {
 	a.send(pkt(1, 1, true, pFrame...))
 
 	swapped := make(chan error, 1)
-	go func() { swapped <- stream.Swap("scripted:b", 100*time.Millisecond) }()
+	go func() { swapped <- stream.Swap("scripted:b", 100*time.Millisecond, false) }()
 	<-b.started
 	b.send(pkt(2, 1, true, pFrame...))
 
@@ -187,7 +198,7 @@ func TestSwapMovesAtOnceWhenTheOldSourceHasGoneSilent(t *testing.T) {
 	a.send(pkt(1, 1, false, pFrame...)) // the old source dies mid-picture
 
 	swapped := make(chan error, 1)
-	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second) }()
+	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second, false) }()
 	<-b.started
 	b.send(pkt(2, 1, false, sps...))
 	time.Sleep(holdForBoundary + 20*time.Millisecond)
@@ -199,8 +210,48 @@ func TestSwapMovesAtOnceWhenTheOldSourceHasGoneSilent(t *testing.T) {
 
 func TestSwapOfAnIdleStreamOnlyChangesTheNextDial(t *testing.T) {
 	stream := NewStream("scripted:a")
-	require.NoError(t, stream.Swap("scripted:b", time.Second))
+	require.NoError(t, stream.Swap("scripted:b", time.Second, false))
 	require.Equal(t, "scripted:b", stream.producers[0].url)
+}
+
+func TestBreakFirstStopsTheOldSourceBeforeDialling(t *testing.T) {
+	var a *scriptedSource
+	var stoppedFirst bool
+	stream, cons, a, b := swapRigDialling(t, func(url string) error {
+		if url == "scripted:b" {
+			stoppedFirst = a.isStopped()
+		}
+		return nil
+	})
+	a.send(pkt(1, 1, true, pFrame...))
+
+	require.NoError(t, stream.Swap("scripted:b", time.Second, true))
+	<-b.started
+	b.send(pkt(2, 1, false, sps...), pkt(2, 2, true, idrTail...))
+
+	require.True(t, stoppedFirst)
+	require.Equal(t, []string{"a1", "b1", "b2"}, cons.trace())
+	require.Equal(t, "scripted:b", stream.producers[0].url)
+}
+
+func TestBreakFirstRedialsTheOldSourceWhenTheNewOneFails(t *testing.T) {
+	again := newScriptedSource()
+	stream, cons, a, _ := swapRig(t)
+	a.send(pkt(1, 1, true, pFrame...))
+	HandleFunc("scripted", func(url string) (core.Producer, error) {
+		if url == "scripted:b" {
+			return nil, errors.New("refused")
+		}
+		return again, nil
+	})
+
+	require.Error(t, stream.Swap("scripted:b", time.Second, true))
+	<-again.started
+	again.send(pkt(3, 1, true, pFrame...))
+
+	require.True(t, a.isStopped())
+	require.Equal(t, []string{"a1", "a1"}, cons.trace()) // the second from the redialled source
+	require.Equal(t, "scripted:a", stream.producers[0].url)
 }
 
 func TestStartsKeyframe(t *testing.T) {

@@ -70,7 +70,8 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 
 		// Watchful: swap=1 replaces a running source make-before-break.
 		if query.Get("swap") == "1" {
-			if err := SwapSource(name, src, swapTimeout(query.Get("timeout"))); err != nil {
+			breakFirst := query.Get("break") == "1"
+			if err := SwapSource(name, src, swapTimeout(query.Get("timeout")), breakFirst); err != nil {
 				http.Error(w, err.Error(), swapStatus(err))
 			}
 			return
