@@ -61,6 +61,18 @@ jobs:
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
+      # Short-lived read token for the private Exacq module, minted from the
+      # org's ihub-reader GitHub App (contents: read on Watchful-IP/ihub only).
+      - name: Mint ihub read token
+        id: ihub
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.IHUB_READER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.IHUB_READER_APP_PRIVATE_KEY }}
+          owner: Watchful-IP
+          repositories: ihub
+          permission-contents: read
+
       - name: Build and push
         uses: useblacksmith/build-push-action@v2
         with:
@@ -72,3 +84,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          secrets: |
+            ihub_read_token=${{ steps.ihub.outputs.token }}

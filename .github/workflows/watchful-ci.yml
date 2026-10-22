@@ -10,12 +10,32 @@ jobs:
   test:
     name: Build and test
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    env: { CGO_ENABLED: 0 }
+    env:
+      CGO_ENABLED: 0
+      # The Exacq source imports a private Watchful module.
+      GOPRIVATE: github.com/Watchful-IP/*
     steps:
       - uses: actions/checkout@v7
 
+      # Short-lived read token for the private Exacq module, minted from the
+      # org's ihub-reader GitHub App (contents: read on Watchful-IP/ihub only).
+      - name: Mint ihub read token
+        id: ihub
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.IHUB_READER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.IHUB_READER_APP_PRIVATE_KEY }}
+          owner: Watchful-IP
+          repositories: ihub
+          permission-contents: read
+
+      - name: Use it for Watchful-IP modules only
+        run: git config --global url."https://x-access-token:${{ steps.ihub.outputs.token }}@github.com/Watchful-IP/".insteadOf "https://github.com/Watchful-IP/"
+
+      # No module cache: it would hold the private Exacq source, and fork PRs
+      # can restore caches saved on the base branch.
       - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
+        with: { go-version: '1.25', cache: false }
 
       - name: Install media validation tools
         run: |
@@ -28,7 +48,7 @@ jobs:
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./pkg/milestone/... ./internal/http/... ./internal/milestone/... ./internal/rtsp/... ./internal/streams/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./pkg/milestone/... ./pkg/reorder/... ./pkg/exacq/... ./internal/http/... ./internal/milestone/... ./internal/exacq/... ./internal/rtsp/... ./internal/streams/...
 
       # Every package except the ones already broken at the upstream release tag
       # (stale test expectations in internal/ffmpeg and pkg/hap/tlv8; tests that no

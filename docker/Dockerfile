@@ -18,9 +18,18 @@ WORKDIR /build
 
 RUN apk add git
 
-# Cache dependencies
+# Cache dependencies. The Exacq source imports a private Watchful module; its
+# read token is a build secret, passed to git only for this command.
+ENV GOPRIVATE=github.com/Watchful-IP/*
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/root/.cache/go-build go mod download
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=ihub_read_token \
+    if [ -s /run/secrets/ihub_read_token ]; then \
+      GIT_CONFIG_COUNT=1 \
+      GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/ihub_read_token)@github.com/.insteadOf" \
+      GIT_CONFIG_VALUE_0="https://github.com/" \
+      go mod download; \
+    else go mod download; fi
 
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath
