@@ -1,0 +1,94 @@
+{
+  "recorderVersion": "26.1.7.3",
+  "testedOn": "2026-10-22",
+  "environment": "isolated disposable Linux recorder; no copied license or cameras",
+  "migration": "vendor-supported EVAPI_MigrateSystemToSecurePasswords",
+  "baselineAdvertisedMechanisms": 1,
+  "advertisedMechanisms": 3,
+  "authenticatedConfiguration": true,
+  "badPasswordRejected": true,
+  "devices": 0,
+  "license": "unlicensed",
+  "loginAndReadMs": [
+    85,
+    29,
+    24
+  ],
+  "selectedMechanism": 1,
+  "statusAndLicense": true,
+  "successfulLogins": 4,
+  "apiChecks": [
+    {
+      "target": "isolated",
+      "action": "inventory",
+      "httpStatus": 200,
+      "cameras": 0,
+      "durationMs": 71
+    },
+    {
+      "target": "isolated",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 0,
+      "durationMs": 22,
+      "licenseStatus": "unlicensed"
+    },
+    {
+      "target": "isolated",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 0,
+      "durationMs": 23,
+      "licenseStatus": "unlicensed"
+    },
+    {
+      "target": "isolated",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 0,
+      "durationMs": 24,
+      "licenseStatus": "unlicensed"
+    },
+    {
+      "target": "primary",
+      "action": "inventory",
+      "httpStatus": 200,
+      "cameras": 3,
+      "durationMs": 17
+    },
+    {
+      "target": "primary",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 3,
+      "durationMs": 21,
+      "licenseStatus": "trial"
+    },
+    {
+      "target": "primary",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 3,
+      "durationMs": 20,
+      "licenseStatus": "trial"
+    },
+    {
+      "target": "primary",
+      "action": "health",
+      "httpStatus": 200,
+      "cameras": 3,
+      "durationMs": 20,
+      "licenseStatus": "trial"
+    }
+  ],
+  "primaryAuthenticationUnchanged": true,
+  "cleanup": {
+    "isolatedServerStopped": true,
+    "namespaceProcessesAndMountsAbsent": true,
+    "relayAndTunnelStopped": true,
+    "localAPIStopped": true,
+    "postCleanupPrimaryMechanismMask": 1,
+    "postCleanupPrimaryLoginPassed": true,
+    "primaryProcessesUnchanged": true
+  }
+}

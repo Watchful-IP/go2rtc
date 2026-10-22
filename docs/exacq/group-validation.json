@@ -1,0 +1,36 @@
+{
+  "testedAt": "2026-10-21T19:55:14.061Z",
+  "sdkProviders": 0,
+  "recorderTransport": "pure Go native",
+  "scheduler": "in-memory fixture",
+  "groups": [
+    {
+      "id": "WatchfulNativeGroupLab-20261022_gr",
+      "parentId": null,
+      "cameraIds": [
+        459264
+      ]
+    },
+    {
+      "id": "WatchfulNativeGroupLab-20261022_grP1468-Dahua_gr",
+      "parentId": "WatchfulNativeGroupLab-20261022_gr",
+      "cameraIds": [
+        459776,
+        4784640
+      ]
+    },
+    {
+      "id": "WatchfulNativeGroupLab-20261022_grAudio-only_gr",
+      "parentId": "WatchfulNativeGroupLab-20261022_gr",
+      "cameraIds": []
+    }
+  ],
+  "groupIsolation": true,
+  "ownedMotionLinksCleaned": true,
+  "cleanup": {
+    "temporaryGroupsRemoved": true,
+    "eventsConfigurationUnchanged": true,
+    "usersConfigurationUnchanged": true,
+    "sdkExactDeviceScheduleCodecLicenseBaseline": true
+  }
+}

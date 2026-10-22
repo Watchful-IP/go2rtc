@@ -1,0 +1,360 @@
+{
+  "implementation": "pure Go native Exacq",
+  "measuredAt": "2026-10-21",
+  "baselineCommit": "d9d6520633933744f07206f4f4668410883f3eef",
+  "source": "validation.md and producer-validation.md; private raw evidence retained separately",
+  "method": {
+    "host": "local Apple Silicon host",
+    "mediaPath": "native TCP -> pure Go producer -> go2rtc fragmented MP4",
+    "vendorLibraryLoaded": false,
+    "sdkGatewayUsed": false,
+    "soak": "three concurrent streams, nominal 120 seconds each; FFmpeg decode afterward",
+    "resourceSamples": "two ps observations during capture; not mean, peak, or statistically comparable CPU",
+    "firstByte": "HTTP request start to first response body byte, including keyframe wait",
+    "frameAge": "separate three-second producer probes: local receipt time minus recorder frame timestamp",
+    "cautions": [
+      "Separate runs from the HTTP and SDK measurements; do not infer a controlled performance ranking.",
+      "Frame age is not glass-to-glass latency and depends on camera/recorder clock synchronization.",
+      "Default I/P exact-duration lookahead adds one frame; fixed-GOP B-picture mode buffers a complete GOP and waits for closure.",
+      "Two minutes does not establish long-term endurance or maximum session capacity."
+    ]
+  },
+  "soak": {
+    "durationSeconds": 120,
+    "decodedFrames": 6363,
+    "packets": 6363,
+    "decoderErrors": 0,
+    "sampleOverlaps": 0,
+    "aggregateFileMegabitsPerSecondApprox": 8.68,
+    "cpuPercentObserved": [
+      0.8,
+      1.4
+    ],
+    "rssKiBObserved": [
+      26320,
+      26384
+    ],
+    "streams": [
+      {
+        "camera": "Axis Q1728",
+        "codec": "H.264",
+        "width": 1920,
+        "height": 1080,
+        "frames": 1800,
+        "bytes": 3659335,
+        "firstByteMs": 2173.915709,
+        "maxReceiveGapMs": 95.82,
+        "mediaSeconds": 119.932
+      },
+      {
+        "camera": "Axis P1468-LE",
+        "codec": "H.265",
+        "width": 3840,
+        "height": 2160,
+        "frames": 1800,
+        "bytes": 22570274,
+        "firstByteMs": 1316.977208,
+        "maxReceiveGapMs": 114.845,
+        "mediaSeconds": 119.96
+      },
+      {
+        "camera": "Dahua DH-IPC-HDW3849H-AS-PV",
+        "codec": "H.265",
+        "width": 3840,
+        "height": 2160,
+        "frames": 2763,
+        "bytes": 103944461,
+        "firstByteMs": 1035.026,
+        "maxReceiveGapMs": 177.198,
+        "mediaSeconds": 120.133
+      }
+    ]
+  },
+  "frameAge": [
+    {
+      "camera": "Axis Q1728",
+      "medianMs": 78.4,
+      "p95Ms": 79.2
+    },
+    {
+      "camera": "Axis P1468-LE",
+      "medianMs": 256.7,
+      "p95Ms": 299.2
+    },
+    {
+      "camera": "Dahua DH-IPC-HDW3849H-AS-PV",
+      "valid": false,
+      "reason": "recorder timestamps ahead of local clock"
+    }
+  ],
+  "reconnect": {
+    "fault": "bounded outage of test-owned native TCP relay only",
+    "upstreamOutageMs": 1602,
+    "sameViewerMaxReceiveGapMs": 3268,
+    "packets": 313,
+    "decodedFrames": 313,
+    "decoderErrors": 0,
+    "freshViewerFrames": 75,
+    "cancelledViewerFrames": 60,
+    "continuingViewerFrames": 151
+  },
+  "archiveGap": {
+    "requestedWindowSeconds": 50,
+    "speed": 4,
+    "sourceGapMs": 16600,
+    "outputGapMs": 4150,
+    "packets": 526,
+    "decodedFrames": 526,
+    "decoderErrors": 0,
+    "mp4MediaSeconds": 12.892,
+    "completionMs": 12960,
+    "finiteEOF": true,
+    "independentSdkFrameCount": 526
+  },
+  "snapshots": {
+    "width": 1280,
+    "height": 720,
+    "historicalFrameOffsetMs": {
+      "Axis Q1728": 32,
+      "Axis P1468-LE": 2,
+      "Dahua DH-IPC-HDW3849H-AS-PV": 30
+    },
+    "insideGap": "explicit no-footage; no live fallback",
+    "decoder": "FFmpeg downstream of native media"
+  },
+  "talkdown": {
+    "device": "Axis C1310-E",
+    "input": "300 ms all-zero mono PCM16 at 8000 Hz",
+    "acceptedInputBytes": 4800,
+    "completionMs": 459,
+    "recorderConnectionsAfter": 0,
+    "baselineSilenceOnly": true,
+    "acousticSignalVerified": true,
+    "acousticVerification": {
+      "scope": "device internal-microphone signal detection only; no human listening, room coverage or intelligibility assessment",
+      "nativeHttpStatus": 200,
+      "acceptedInputBytes": 4800,
+      "chirpMs": 300,
+      "peakDbfs": -36,
+      "frequencySweepHz": [
+        700,
+        2300
+      ],
+      "captureSeconds": 1.76,
+      "captureLimitSeconds": 2,
+      "detected": true,
+      "normalizedCorrelation": 0.636357,
+      "reversedControlPeak": 0.169642,
+      "settingsExactlyRestored": true,
+      "parametersExactlyRestored": true,
+      "rawAudioPersisted": false,
+      "priorAttempt": "bounded readiness timeout; settings restored"
+    }
+  },
+  "contractScope": {
+    "incomingAudio": "not implemented; current ihub Exacq HTTP core exposes no listen method",
+    "ptz": "not implemented; current ihub Exacq HTTP core exposes no PTZ method",
+    "singleForwardedPort": "native TCP for control/media/events; not unique relative to HTTP Web Service",
+    "nativeBenefit": "removes vendor SDK binary, Exacq Web Service and event-callback dependency",
+    "groups": "actual parent/nested/audio-only recorder fixture passed compiled pure-Go VMS; exact cleanup verified",
+    "motion": "owner-scoped create/idempotence/delete with fresh readback; positive camera-generated VMD test alarm history",
+    "backendSelection": "explicit wire or SDK; no automatic fallback",
+    "dotNet": "Requires separately owned routing/URL host changes; 104 focused tests passed including actual compiled wire transport in ClearScript. Older unsupported hosts fail before dialing.",
+    "bPictures": "Explicit fixed-count progressive single-VCL closed-GOP subset; actual SDK input and generated recorder source correlated.",
+    "audioOutput": "Native chirp detected by device internal microphone with reversed-signal control and exact settings restoration; no room coverage or intelligibility claim."
+  },
+  "bPictures": {
+    "mode": "explicit reorder=gop&gop=N; known fixed encoder count required",
+    "default": "B pictures rejected without opt-in",
+    "helper": "pkg/exacqtiming.New(codec, minDecodeStep, expectedFrames)",
+    "runtimeVendorLibraryLoaded": false,
+    "input": "generated 160x90 H.264 and HEVC, 45-picture cycle, 15-picture closed GOPs",
+    "timestampModel": {
+      "pts": "recovered presentation timestamp multiset assigned by POC",
+      "dts": "synthesized monotonic decode deadlines no later than PTS",
+      "independentWireDts": false
+    },
+    "guards": {
+      "expectedPictures": [
+        1,
+        512
+      ],
+      "maximumGopBytes": 33554432,
+      "maximumWithinGopSpanSeconds": 10,
+      "fixedCountSource": "independently known encoder configuration; never inferred from received data",
+      "syntax": "progressive single-VCL closed IDR; H.264 POC type0; qualified HEVC",
+      "required": "stable repeated parameters, dense unique POC, unique timestamps, next-IDR closure",
+      "unsupported": [
+        "unknown or adaptive GOP count",
+        "open GOP",
+        "field coding",
+        "multiple VCL slices per access unit",
+        "unsealed motion cut or EOF"
+      ]
+    },
+    "boundaries": {
+      "buffering": "one GOP plus closure wait",
+      "interGopGaps": "preserved when closure is available",
+      "playbackLookaheadSeconds": 10,
+      "playbackEnd": "complete final GOP; exclusive actual_end reported; sealing IDR not emitted",
+      "snapshot": "closure dependencies do not widen three-second presentation selection window"
+    },
+    "sdkInputEquivalence": {
+      "actualSdkOracleUsed": true,
+      "h264Callbacks": 66,
+      "hevcCallbacks": 65,
+      "fullNalSequenceMatches": 131,
+      "pictureKindMismatches": 0,
+      "sourceVclHashesPerCodec": 45,
+      "completeSdkGopsPerCodec": 3,
+      "completeNativeLiveGopsPerCodec": 6,
+      "completeNativeArchiveGopsPerCodec": 6,
+      "maximumTimestampMultisetErrorMs": 0.667,
+      "separateWallClockWindows": true
+    },
+    "validationLimit": "Controlled generated recorder input; not arbitrary camera/encoder B-picture compatibility.",
+    "producerOutputs": {
+      "h264": {
+        "live": {
+          "packets": 90,
+          "decodedFrames": 90,
+          "pixelHashMatches": 90,
+          "sourceCycleFrames": 45,
+          "decoderErrors": 0,
+          "positiveCompositionOffsets": 30,
+          "probeMs": 1417.231,
+          "helperElapsedMs": 6418,
+          "readSeconds": 5,
+          "presentationDeltasMs": [
+            40,
+            93,
+            94
+          ]
+        },
+        "archive": {
+          "packets": 45,
+          "decodedFrames": 45,
+          "pixelHashMatches": 45,
+          "sourceCycleFrames": 45,
+          "decoderErrors": 0,
+          "positiveCompositionOffsets": 15,
+          "probeMs": 37.778,
+          "helperElapsedMs": 763,
+          "speed": 4,
+          "finiteEOF": true,
+          "endExtensionMs": 589,
+          "actualSourceSpanMs": 3026
+        },
+        "snapshots": {
+          "width": 80,
+          "height": 46,
+          "requestedAfterFirstFrameMs": 1,
+          "capturedAfterFirstFrameMs": 93,
+          "historicalPixelMatch": true,
+          "historicalCompletionMs": 77,
+          "liveCompletionMs": 1223
+        }
+      },
+      "h265": {
+        "live": {
+          "packets": 90,
+          "decodedFrames": 90,
+          "pixelHashMatches": 90,
+          "sourceCycleFrames": 45,
+          "decoderErrors": 0,
+          "positiveCompositionOffsets": 42,
+          "probeMs": 1553.502,
+          "helperElapsedMs": 6556,
+          "readSeconds": 5,
+          "presentationDeltasMs": [
+            40,
+            93,
+            94
+          ]
+        },
+        "archive": {
+          "packets": 45,
+          "decodedFrames": 45,
+          "pixelHashMatches": 45,
+          "sourceCycleFrames": 45,
+          "decoderErrors": 0,
+          "positiveCompositionOffsets": 21,
+          "probeMs": 85.089,
+          "helperElapsedMs": 811,
+          "speed": 4,
+          "finiteEOF": true,
+          "endExtensionMs": 590,
+          "actualSourceSpanMs": 3027
+        },
+        "snapshots": {
+          "width": 80,
+          "height": 46,
+          "requestedAfterFirstFrameMs": 1,
+          "capturedAfterFirstFrameMs": 93,
+          "historicalPixelMatch": true,
+          "historicalCompletionMs": 158,
+          "liveCompletionMs": 1866
+        }
+      }
+    },
+    "repeatPreparation": {
+      "codec": "H.264",
+      "freshHardwareSearches": 2,
+      "fractionalStartStable": true,
+      "fractionalEndStable": true
+    },
+    "cleanup": {
+      "temporaryDeviceDeleted": true,
+      "originalSpeakerRestoredInPlace": true,
+      "freshNativeReadbacks": 3,
+      "freshSdkBaselineFingerprintMatch": true,
+      "originalIdsSchedulesFormatsMatch": true,
+      "enabledDevices": 4,
+      "licensedCapacity": 4,
+      "licenseOrMacChanged": false,
+      "temporarySourceAndWatchdogStopped": true,
+      "temporaryTunnelStopped": true,
+      "loopbackListenersVerifiedClosed": true,
+      "ownedNativeApiStopped": true,
+      "ownedCaptureRelayStopped": true,
+      "finalLocalListenersAbsent": true,
+      "temporaryVmSourceListenerAbsent": true,
+      "protectedSharedCachesRetained": true
+    }
+  },
+  "authentication": {
+    "mechanism0": "real recorder verified",
+    "mechanism1": "three actual SDK differential transcripts; no real recorder mechanism1 negotiation",
+    "strongestAdvertisedSelected": true,
+    "downgradeOnFailure": false
+  },
+  "buildValidation": {
+    "cgoEnabled": false,
+    "linuxAmd64FullBinary": "passed",
+    "linuxArm64FullBinary": "passed",
+    "finalRaceTests": {
+      "pkg/exacq": "passed",
+      "internal/exacq": "passed",
+      "pkg/exacqtiming": "passed",
+      "pkg/core": "passed",
+      "pkg/mp4": "passed"
+    },
+    "timingFuzzExecutions": 650765,
+    "timingFuzzSeconds": 10,
+    "companionCommit": "042ffd6a",
+    "companionFocusedTestsPassed": 34,
+    "companionIntegrationTypecheck": "passed",
+    "companionNvrVmsDualBundleBuilds": "passed",
+    "dotNetHostPrerequisiteFocusedTestsPassed": 104
+  },
+  "authenticationQualification": "SPAKE2+ actual isolated recorder26.1.7.3 negotiation/control plus bad-password rejection/recovery; original P224 unchanged",
+  "events": {
+    "transport": "recorder-originated HTTP webhook configured over native TCP",
+    "persistentNativeEventConnection": false,
+    "historyPolling": false,
+    "delivery": "best-effort; failed recorder HTTP deliveries may be lost",
+    "customRetryQueue": false,
+    "defaultRecorderBatchSeconds": 5,
+    "evidence": "webhooks.md and webhook-validation.json"
+  }
+}

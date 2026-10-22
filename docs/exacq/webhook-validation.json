@@ -1,0 +1,83 @@
+{
+  "testedAt": "2026-10-22",
+  "implementation": "pure Go native provisioning plus recorder-originated HTTP callbacks",
+  "idleNativeEventConnections": 0,
+  "vendorSDKProviders": 0,
+  "configuration": {
+    "freshReadback": true,
+    "idempotent": true,
+    "concurrentApplies": 2,
+    "sameSingleLink": true,
+    "twoOwnerIsolation": true,
+    "baselineRestored": true,
+    "remainingTestTargets": 0,
+    "remainingTestLinks": 0
+  },
+  "payload": {
+    "motionSourceType": 2,
+    "alarmStartsOnly": true,
+    "fractionalUTCTimestamp": true,
+    "cameraMapping": "verified owned link ID and canonical camera CASID"
+  },
+  "delivery": {
+    "policy": "best-effort",
+    "recorderBatchSecondsUnchanged": 5,
+    "controlledTriggerToReceiptMsApprox": 2070.5,
+    "latencyQualification": "one observation, not percentile or glass-to-glass",
+    "rejectedHTTP500Batches": 6,
+    "identicalRejectedBatchRetriesObserved": 0,
+    "failureObservationSeconds": 139.0,
+    "historyBackfill": false,
+    "persistentEventSubscription": false,
+    "customRetryQueue": false
+  },
+  "compiledAutoConfiguration": {
+    "nativeSetup": true,
+    "freshNoOpPlan": true,
+    "actualCallback": true,
+    "nativeHistoricalJPEGBytes": 63772,
+    "cleanupVerified": true,
+    "qualification": "original lab run preceded simplification from a custom scheduling handoff to the ordinary webhook path; final simplified replay is recorded separately"
+  },
+  "cleanup": {
+    "allOriginalDevicesSchedulesAndFormatsUnchanged": true,
+    "receiverStopped": true,
+    "nativeAPITestServerStopped": true
+  },
+  "limits": [
+    "Local lab receiver; production ingress deployment not exercised.",
+    "Recorder failed HTTP deliveries may be lost.",
+    "No endurance or universal recorder-version claim."
+  ],
+  "finalSimplifiedCompiledReplay": {
+    "input": "actual recorder webhook replay",
+    "deviceWrites": 0,
+    "sdkProviders": 0,
+    "runtimes": [
+      {
+        "kind": "nvr",
+        "standardWebhookFlow": true,
+        "deliveryJobs": 0,
+        "stableEventId": true,
+        "eventMs": 1792613986536,
+        "snapshotBytes": 64089
+      },
+      {
+        "kind": "vms",
+        "standardWebhookFlow": true,
+        "deliveryJobs": 0,
+        "stableEventId": true,
+        "eventMs": 1792613986536,
+        "snapshotBytes": 64089
+      }
+    ],
+    "qualification": "ordinary compiled parser/snapshot hooks, private capture replay, real recorder snapshot reads; no deployed ingress test"
+  },
+  "tests": {
+    "nativeAndPrivateAPIRace": "pass",
+    "companionSharedPassed": 121,
+    "companionSkipped": 5,
+    "companionIntegrationTypecheck": "pass",
+    "diffCheck": "pass"
+  }
+}
