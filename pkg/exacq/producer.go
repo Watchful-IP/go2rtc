@@ -64,19 +64,25 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	return nil, err
 }
 
-// silentStreamTimeout bounds waiting on a stream with fallbacks left. A live
-// stream answers within milliseconds with the recorder's buffered GOP.
-const silentStreamTimeout = 4 * time.Second
+// silentStreamTimeout bounds waiting for a stream's first packet when other
+// streams are left to try. A live stream answers within milliseconds with the
+// recorder's buffered GOP; once video flows, waiting for a keyframe is normal.
+var silentStreamTimeout = 4 * time.Second
 
-var errSilentStream = errors.New("exacq: live stream sent no video")
+var (
+	errSilentStream = errors.New("exacq: live stream sent no video")
+	errNoVideoYet   = errors.New("exacq: no video before the silence timeout")
+)
 
 func dialStream(ctx context.Context, source *Source, client native.MediaSession, stream native.Stream, fallback bool) (*Producer, error) {
-	probeCtx, cancel := ctx, context.CancelFunc(func() {})
-	if fallback {
-		probeCtx, cancel = context.WithTimeout(ctx, silentStreamTimeout)
-	}
-	defer cancel()
+	probeCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	p := newProducer(source, client, stream, source.URL.Host)
+	if fallback {
+		silence := time.AfterFunc(silentStreamTimeout, func() { cancel(errNoVideoYet) })
+		defer silence.Stop()
+		p.onVideo = func() { silence.Stop() }
+	}
 	if err := p.probe(probeCtx); err != nil {
 		p.cancel()
 		return nil, err
@@ -108,6 +114,8 @@ type Producer struct {
 	seq       uint16
 	lastKey   time.Time
 	last      time.Time
+
+	onVideo func() // called once, on the live stream's first packet
 
 	cursor        time.Time
 	frames        []*native.MediaPacket
@@ -154,7 +162,8 @@ func (p *Producer) probe(ctx context.Context) error {
 			return failf(native.CodeNoRecording, native.PhaseSearch, "no decodable recording in the requested range")
 		}
 		typed := native.AsError(err)
-		if !p.source.Playback && (errors.Is(err, context.DeadlineExceeded) || typed != nil && typed.Code == native.CodeTimeout) {
+		silent := errors.Is(context.Cause(ctx), errNoVideoYet) || errors.Is(err, context.DeadlineExceeded) || typed != nil && typed.Code == native.CodeTimeout
+		if !p.source.Playback && silent {
 			return wrapf(errors.Join(errSilentStream, err), native.CodeStreamUnavailable, native.PhaseLive, "camera %d sent no video on stream %d (%dx%d); it may be offline or disconnected from the recorder", p.source.Camera, p.stream.ID, p.stream.Width, p.stream.Height)
 		}
 		return err
@@ -282,6 +291,10 @@ func (p *Producer) next(ctx context.Context) (*frame, error) {
 		// come from the authenticated configuration and may differ from camera IDs.
 		if !p.source.Playback && packet.StreamID != p.stream.WireID {
 			continue
+		}
+		if p.onVideo != nil {
+			p.onVideo()
+			p.onVideo = nil
 		}
 		p.Recv += len(packet.Data)
 		v, err := p.state.Prepare(packet)
