@@ -123,7 +123,7 @@ func (t *timeline) gap(at time.Time) bool {
 		return false
 	}
 	limit := max(2*time.Second, 4*milliseconds(t.interval()))
-	return at.Sub(t.latest) > limit
+	return at.Sub(t.latest) >= limit
 }
 
 // heldFor uses wall time live; playback batches arrive at once, so it uses

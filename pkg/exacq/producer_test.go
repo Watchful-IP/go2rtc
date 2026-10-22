@@ -448,31 +448,37 @@ func TestShortPlaybackStaysInsideItsEnd(t *testing.T) {
 }
 
 func TestPlaybackGapDoesNotStretchBFrameCadence(t *testing.T) {
-	frames := fixtureMedia(t, "b.h264", 5)
-	for _, frame := range frames {
-		frame.Type = native.MediaPFrame
+	// 11 s is a typical motion-recording gap; 1933 ms lands exactly on the 2 s gap threshold.
+	for _, shift := range []time.Duration{11 * time.Second, 1933 * time.Millisecond} {
+		t.Run(shift.String(), func(t *testing.T) {
+			frames := fixtureMedia(t, "b.h264", 5)
+			for _, frame := range frames {
+				frame.Type = native.MediaPFrame
+			}
+			frames[0].Type, frames[15].Type, frames[30].Type = native.MediaIFrame, native.MediaIFrame, native.MediaIFrame
+			for _, frame := range frames[30:] { // motion-only recording resumes later
+				at := frame.Timestamp().Add(shift)
+				frame.Seconds, frame.Milliseconds = uint32(at.Unix()), uint16(at.Nanosecond()/int(time.Millisecond))
+			}
+			source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000020000&speed=32")
+			require.NoError(t, err)
+			session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}}
+			p := mockProducer(t, source, 5, session)
+			require.NoError(t, p.probe(context.Background()))
+			var output []core.SampleTiming
+			p.video.Input = func(packet *core.Packet) {
+				timing, ok := core.GetSampleTiming(packet)
+				require.True(t, ok)
+				output = append(output, timing)
+			}
+			require.NoError(t, p.Start())
+			require.Len(t, output, 45)
+			nominal := output[20].Duration // inside the second GOP, before the gap
+			for i := 31; i < 44; i++ {
+				require.LessOrEqual(t, output[i].Duration, nominal*3/2, "picture %d after the gap keeps the stream's cadence", i)
+			}
+			gap := output[30].DecodeTime - (output[29].DecodeTime + uint64(output[29].Duration))
+			require.Greater(t, gap+uint64(output[29].Duration), uint64(shift.Seconds()*0.9*90000/32), "the recording gap stays on the output clock")
+		})
 	}
-	frames[0].Type, frames[15].Type, frames[30].Type = native.MediaIFrame, native.MediaIFrame, native.MediaIFrame
-	for _, frame := range frames[30:] { // motion-only recording resumes 11 s later
-		frame.Seconds += 11
-	}
-	source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000020000&speed=32")
-	require.NoError(t, err)
-	session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}}
-	p := mockProducer(t, source, 5, session)
-	require.NoError(t, p.probe(context.Background()))
-	var output []core.SampleTiming
-	p.video.Input = func(packet *core.Packet) {
-		timing, ok := core.GetSampleTiming(packet)
-		require.True(t, ok)
-		output = append(output, timing)
-	}
-	require.NoError(t, p.Start())
-	require.Len(t, output, 45)
-	nominal := output[20].Duration // inside the second GOP, before the gap
-	for i := 31; i < 44; i++ {
-		require.LessOrEqual(t, output[i].Duration, nominal*3/2, "picture %d after the gap keeps the stream's cadence", i)
-	}
-	gap := output[30].DecodeTime - (output[29].DecodeTime + uint64(output[29].Duration))
-	require.Greater(t, gap+uint64(output[29].Duration), uint64(10*90000/32), "the recording gap stays on the output clock")
 }
