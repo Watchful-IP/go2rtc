@@ -125,6 +125,13 @@ func (g *GOPClock) Observe(t int64, key, anchor bool) {
 	}
 }
 
+// Restart forgets the current GOP and anchor so the next spans are not
+// measured across a discontinuity; the last known interval is kept.
+func (g *GOPClock) Restart() {
+	g.key, g.pictures = 0, 0
+	g.lastAnchor, g.sinceAnchor = 0, 0
+}
+
 // Get returns the picture interval in ms, or 0 until one is known: the last
 // GOP's span, then the signalled frame rate, then anchor spacing.
 func (g *GOPClock) Get(signalled float64) float64 {

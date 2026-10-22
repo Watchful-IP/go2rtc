@@ -45,6 +45,7 @@ type timeline struct {
 	held    []*frame
 	heldAt  time.Time
 	decided bool
+	latest  time.Time // newest recorder stamp seen, for gap detection
 
 	pending *frame // I/P: waits for the next timestamp
 	reorder *reorder.Reorderer[*frame]
@@ -57,6 +58,13 @@ func newTimeline(base time.Time, playback bool, signalled float64) *timeline {
 // push accepts the next picture in decode order and returns pictures whose
 // output timing is now known.
 func (t *timeline) push(f *frame) []*frame {
+	if t.gap(f.time) {
+		// Playback keeps recording gaps; a span across one says nothing about cadence.
+		t.clock.Restart()
+	}
+	if f.time.After(t.latest) {
+		t.latest = f.time
+	}
 	t.clock.Observe(f.time.UnixMilli(), f.Key, !f.Picture.B)
 	t.bFrames = t.bFrames || f.Picture.B
 	if t.decided {
@@ -83,8 +91,9 @@ func (t *timeline) push(f *frame) []*frame {
 	return out
 }
 
-// flush releases every held picture at the end of a finite stream.
-func (t *timeline) flush(nominal time.Duration) []*frame {
+// flush releases every held picture at the end of a finite stream. The final
+// picture lasts nominal, clipped so it ends by the exclusive end.
+func (t *timeline) flush(nominal time.Duration, end time.Time) []*frame {
 	var out []*frame
 	for _, h := range t.held {
 		out = append(out, t.emit(h)...)
@@ -98,7 +107,23 @@ func (t *timeline) flush(nominal time.Duration) []*frame {
 	if t.reorder != nil {
 		out = append(out, t.timed(t.reorder.Flush(t.intervalOrDefault()))...)
 	}
+	if n := len(out); n != 0 && !end.IsZero() {
+		last := out[n-1]
+		if remaining := end.Sub(last.time); remaining < last.duration {
+			last.duration = max(remaining, time.Millisecond)
+		}
+	}
 	return out
+}
+
+// gap reports a jump that no frame cadence explains: more than four picture
+// intervals, and at least two seconds so slow streams are not split.
+func (t *timeline) gap(at time.Time) bool {
+	if t.latest.IsZero() {
+		return false
+	}
+	limit := max(2*time.Second, 4*milliseconds(t.interval()))
+	return at.Sub(t.latest) > limit
 }
 
 // heldFor uses wall time live; playback batches arrive at once, so it uses

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"io"
 	"math"
 	"sync/atomic"
 	"time"
@@ -137,6 +136,11 @@ func streamCandidates(inventory *native.Inventory, source *Source) ([]native.Str
 	return []native.Stream{stream}, err
 }
 
+// errPlaybackEnd is the producer's own end of a finite stream. Session errors
+// are never treated as an end: a dropped recorder connection keeps io.EOF in
+// its chain, and must fail the clip rather than truncate it silently.
+var errPlaybackEnd = errors.New("exacq: end of playback")
+
 // probe waits for the first decodable keyframe, which defines the track.
 func (p *Producer) probe(ctx context.Context) error {
 	if !p.source.Playback {
@@ -146,7 +150,7 @@ func (p *Producer) probe(ctx context.Context) error {
 	}
 	f, err := p.next(ctx)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, errPlaybackEnd) {
 			return failf(native.CodeNoRecording, native.PhaseSearch, "no decodable recording in the requested range")
 		}
 		typed := native.AsError(err)
@@ -198,7 +202,7 @@ func (p *Producer) Start() (err error) {
 	defer func() {
 		p.cancel()
 		_ = p.client.Close()
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, errPlaybackEnd) {
 			err = nil
 		}
 		if p.source.Playback {
@@ -230,12 +234,12 @@ func (p *Producer) Start() (err error) {
 func (p *Producer) timed(ctx context.Context) (*frame, error) {
 	for len(p.ready) == 0 {
 		if p.ended {
-			return nil, io.EOF
+			return nil, errPlaybackEnd
 		}
 		f, err := p.next(ctx)
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, errPlaybackEnd) {
 			p.ended = true
-			p.ready = p.timeline.flush(p.endDuration())
+			p.ready = p.timeline.flush(p.nominalInterval(), p.source.End)
 			continue
 		}
 		if err != nil {
@@ -247,17 +251,6 @@ func (p *Producer) timed(ctx context.Context) (*frame, error) {
 	p.ready[0] = nil
 	p.ready = p.ready[1:]
 	return f, nil
-}
-
-// endDuration keeps the last playback picture inside the requested end.
-func (p *Producer) endDuration() time.Duration {
-	duration := p.nominalInterval()
-	if pending := p.timeline.pending; pending != nil && p.source.Playback {
-		if remaining := p.source.End.Sub(pending.time); remaining > 0 && remaining < duration {
-			duration = remaining
-		}
-	}
-	return duration
 }
 
 // next returns the next decodable picture in decode order.
@@ -301,7 +294,7 @@ func (p *Producer) next(ctx context.Context) (*frame, error) {
 		p.assembled = true
 		if p.source.Playback {
 			if !v.Time.Before(p.source.End) {
-				return nil, io.EOF
+				return nil, errPlaybackEnd
 			}
 			return newFrame(v), nil
 		}
@@ -333,7 +326,7 @@ func (p *Producer) checkAdvance(f *frame) error {
 func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error) {
 	for p.index >= len(p.frames) {
 		if !p.cursor.Before(p.source.End) {
-			return nil, io.EOF
+			return nil, errPlaybackEnd
 		}
 		end := p.cursor.Add(10 * time.Second)
 		if end.After(p.source.End) {

@@ -21,6 +21,7 @@ type fakeMediaSession struct {
 	inventory *native.Inventory
 	live      []*native.MediaPacket
 	batches   [][]*native.MediaPacket
+	searchErr error // returned once the batches run out
 	requests  [][2]time.Time
 	selected  uint32
 	closed    bool
@@ -47,7 +48,7 @@ func (s *fakeMediaSession) Search(ctx context.Context, id uint32, start, end tim
 	s.selected = id
 	s.requests = append(s.requests, [2]time.Time{start, end})
 	if len(s.batches) == 0 {
-		return nil, nil
+		return nil, s.searchErr
 	}
 	frames := append([]*native.MediaPacket(nil), s.batches[0]...)
 	s.batches = s.batches[1:]
@@ -154,8 +155,8 @@ func TestProducerLiveStartsFromBufferedGOP(t *testing.T) {
 				timing, _ := core.GetSampleTiming(packet)
 				output = append(output, timing)
 			}
-			require.NoError(t, p.Start())
-			require.Len(t, output, 30, "the buffered GOP is emitted, not discarded")
+			require.ErrorIs(t, p.Start(), io.EOF, "a live session ending is a failure, not a clean end")
+			require.Len(t, output, 29, "the buffered GOP is emitted, not discarded; the last picture awaits a successor")
 			for i := 1; i < len(output); i++ {
 				require.Equal(t, output[i-1].DecodeTime+uint64(output[i-1].Duration), output[i].DecodeTime, "contiguous at %d", i)
 			}
@@ -184,9 +185,9 @@ func TestProducerLiveDiscontinuousBufferWaitsForKeyframe(t *testing.T) {
 			require.NotContains(t, p.URL, "password")
 			var output []*core.Packet
 			p.video.Input = func(packet *core.Packet) { output = append(output, packet) }
-			require.NoError(t, p.Start())
-			require.Len(t, output, 15, "the last picture is released when the session ends")
-			for i, packet := range output[:14] {
+			require.ErrorIs(t, p.Start(), io.EOF, "a live session ending is a failure, not a clean end")
+			require.Len(t, output, 14, "each picture is released when its successor arrives")
+			for i, packet := range output {
 				timing, ok := core.GetSampleTiming(packet)
 				require.True(t, ok)
 				delta := frames[i+16].Timestamp().Sub(frames[i+15].Timestamp())
@@ -322,10 +323,18 @@ func TestProducerReordersBFrames(t *testing.T) {
 				require.True(t, ok)
 				output = append(output, timing)
 			}
-			require.NoError(t, p.Start())
-			require.Len(t, output, 45)
+			gops := 3
+			if tc.playback {
+				require.NoError(t, p.Start())
+				require.Len(t, output, 45)
+			} else {
+				// Live ends in an error; pictures still held for reordering are not emitted.
+				require.ErrorIs(t, p.Start(), io.EOF)
+				gops = len(output) / 15
+				require.GreaterOrEqual(t, gops, 2)
+			}
 			display := bFixtureDisplay[tc.name]
-			for gop := 0; gop < 3; gop++ {
+			for gop := 0; gop < gops; gop++ {
 				pictures := output[gop*15 : gop*15+15]
 				for i, timing := range pictures {
 					if i > 0 {
@@ -402,4 +411,68 @@ func FuzzVideoCodec(f *testing.F) {
 var bFixtureDisplay = map[string][]int{
 	"b.h264":        {0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 14, 13},
 	"b-closed.h265": {0, 4, 2, 1, 3, 8, 6, 5, 7, 12, 10, 9, 11, 14, 13},
+}
+
+func TestPlaybackDisconnectIsNotACleanEnd(t *testing.T) {
+	frames := fixtureMedia(t, "ip.h264", 5)
+	source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000030000&speed=32")
+	require.NoError(t, err)
+	// The recorder closing mid-playback keeps io.EOF in the error chain.
+	lost := &native.Error{Code: native.CodeConnectionLost, Phase: native.PhaseSearch, Message: "recorder closed the connection during search", Err: io.EOF}
+	session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}, searchErr: lost}
+	p := mockProducer(t, source, 5, session)
+	require.NoError(t, p.probe(context.Background()))
+	p.video.Input = func(*core.Packet) {}
+	err = p.Start()
+	require.ErrorIs(t, err, lost, "a truncated clip must fail, not end cleanly")
+	require.ErrorIs(t, p.video.EndError(), lost)
+}
+
+func TestShortPlaybackStaysInsideItsEnd(t *testing.T) {
+	frames := fixtureMedia(t, "ip.h264", 5)
+	// One picture fits before the exclusive end, and it is still held when the clip ends.
+	source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000000001&speed=32")
+	require.NoError(t, err)
+	session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}}
+	p := mockProducer(t, source, 5, session)
+	require.NoError(t, p.probe(context.Background()))
+	var output []core.SampleTiming
+	p.video.Input = func(packet *core.Packet) {
+		timing, ok := core.GetSampleTiming(packet)
+		require.True(t, ok)
+		output = append(output, timing)
+	}
+	require.NoError(t, p.Start())
+	require.Len(t, output, 1)
+	require.LessOrEqual(t, output[0].Duration, uint32(90/32+1), "1 ms clip at speed 32")
+}
+
+func TestPlaybackGapDoesNotStretchBFrameCadence(t *testing.T) {
+	frames := fixtureMedia(t, "b.h264", 5)
+	for _, frame := range frames {
+		frame.Type = native.MediaPFrame
+	}
+	frames[0].Type, frames[15].Type, frames[30].Type = native.MediaIFrame, native.MediaIFrame, native.MediaIFrame
+	for _, frame := range frames[30:] { // motion-only recording resumes 11 s later
+		frame.Seconds += 11
+	}
+	source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000020000&speed=32")
+	require.NoError(t, err)
+	session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}}
+	p := mockProducer(t, source, 5, session)
+	require.NoError(t, p.probe(context.Background()))
+	var output []core.SampleTiming
+	p.video.Input = func(packet *core.Packet) {
+		timing, ok := core.GetSampleTiming(packet)
+		require.True(t, ok)
+		output = append(output, timing)
+	}
+	require.NoError(t, p.Start())
+	require.Len(t, output, 45)
+	nominal := output[20].Duration // inside the second GOP, before the gap
+	for i := 31; i < 44; i++ {
+		require.LessOrEqual(t, output[i].Duration, nominal*3/2, "picture %d after the gap keeps the stream's cadence", i)
+	}
+	gap := output[30].DecodeTime - (output[29].DecodeTime + uint64(output[29].Duration))
+	require.Greater(t, gap+uint64(output[29].Duration), uint64(10*90000/32), "the recording gap stays on the output clock")
 }
