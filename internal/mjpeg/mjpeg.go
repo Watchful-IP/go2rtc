@@ -206,12 +206,29 @@ func handlerWS(tr *ws.Transport, _ *ws.Message) error {
 
 	tr.Write(&ws.Message{Type: "mjpeg"})
 
-	go cons.WriteTo(tr.Writer())
+	go func() {
+		// Finite sources (playback) end; tell the client, as the MSE handler does.
+		_, err := cons.WriteTo(tr.Writer())
+		if msg := endMessage(err); msg != nil {
+			tr.Write(msg)
+		}
+	}()
 
 	tr.OnClose(func() {
 		stream.RemoveConsumer(cons)
 	})
 
+	return nil
+}
+
+func endMessage(err error) *ws.Message {
+	switch {
+	// Only a bare io.EOF is a clean end; a dropped source can wrap one.
+	case err == io.EOF:
+		return &ws.Message{Type: "end"}
+	case err != nil && !errors.Is(err, io.ErrClosedPipe):
+		return &ws.Message{Type: "error", Value: "mjpeg: input failed"}
+	}
 	return nil
 }
 

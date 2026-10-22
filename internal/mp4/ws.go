@@ -36,7 +36,8 @@ func handlerWSMSE(tr *ws.Transport, msg *ws.Message) error {
 
 	go func() {
 		_, err := cons.WriteTo(tr.Writer())
-		if errors.Is(err, io.EOF) {
+		// Only a bare io.EOF is a clean end; a dropped source can wrap one.
+		if err == io.EOF {
 			tr.Write(&ws.Message{Type: "end"})
 		} else if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			tr.Write(&ws.Message{Type: "error", Value: "mse: input failed"})
