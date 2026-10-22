@@ -35,7 +35,12 @@ func NewReceiver(media *Media, codec *Codec) *Receiver {
 	r.Input = func(packet *Packet) {
 		r.Bytes += len(packet.Payload)
 		r.Packets++
-		for _, child := range r.childs {
+		// Watchful: children are added and moved while packets flow (consumers joining,
+		// reconnects, source swaps), so read the list under its lock.
+		r.mu.Lock()
+		childs := r.childs
+		r.mu.Unlock()
+		for _, child := range childs {
 			child.Input(packet)
 		}
 	}
