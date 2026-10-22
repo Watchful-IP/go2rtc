@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/Eyevinn/mp4ff v0.56.0
+	github.com/Watchful-IP/ihub/servers/exacq v0.0.0-20261022010822-91813dd07310
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/expr-lang/expr v1.17.7
 	github.com/google/uuid v1.6.0
@@ -28,6 +29,8 @@ require (
 	golang.org/x/net v0.53.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require filippo.io/edwards25519 v1.2.0 // indirect
 
 require (
 	github.com/kr/pretty v0.3.1 // indirect

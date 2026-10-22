@@ -10,7 +10,13 @@ jobs:
   test:
     name: Build and test
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    env: { CGO_ENABLED: 0 }
+    env:
+      CGO_ENABLED: 0
+      # The Exacq source imports a private Watchful module.
+      GOPRIVATE: github.com/Watchful-IP/*
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.IHUB_READ_TOKEN }}@github.com/.insteadOf
+      GIT_CONFIG_VALUE_0: https://github.com/
     steps:
       - uses: actions/checkout@v7
 
@@ -28,7 +34,7 @@ jobs:
         run: go build -ldflags "-s -w" -trimpath
 
       - name: Vet
-        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./pkg/milestone/... ./internal/http/... ./internal/milestone/... ./internal/rtsp/... ./internal/streams/...
+        run: go vet ./pkg/core/... ./pkg/tcp/... ./pkg/rtsp/... ./pkg/aac/... ./pkg/h264/... ./pkg/h265/... ./pkg/mp4/... ./pkg/hls/... ./pkg/ivideon/... ./pkg/milestone/... ./pkg/reorder/... ./pkg/exacq/... ./internal/http/... ./internal/milestone/... ./internal/exacq/... ./internal/rtsp/... ./internal/streams/...
 
       # Every package except the ones already broken at the upstream release tag
       # (stale test expectations in internal/ffmpeg and pkg/hap/tlv8; tests that no
