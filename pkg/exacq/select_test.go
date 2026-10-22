@@ -96,3 +96,35 @@ func TestSilenceMeansNoVideoNotNoKeyframeYet(t *testing.T) {
 	_, err = dialStream(context.Background(), source, quiet, inventory.Streams[0], true)
 	require.ErrorIs(t, err, errSilentStream)
 }
+
+func TestPlaybackSearchIsNotCutShortBySilenceFallback(t *testing.T) {
+	saved := silentStreamTimeout
+	silentStreamTimeout = 20 * time.Millisecond
+	defer func() { silentStreamTimeout = saved }()
+	source, err := ParseURL("exacq://user:password@recorder/101?select=lowest&start=1700000000000&end=1700000010000")
+	require.NoError(t, err)
+	inventory := &native.Inventory{Streams: []native.Stream{
+		{ID: 101, ParentCameraID: 101, WireID: 17, Format: 5, Framerate: 15, Enabled: true, Width: 640, Height: 360},
+		{ID: 102, ParentCameraID: 101, WireID: 18, Format: 5, Framerate: 15, Enabled: true, Width: 1920, Height: 1080},
+	}}
+	session := &slowSearchSession{fakeMediaSession: fakeMediaSession{inventory: inventory, batches: [][]*native.MediaPacket{fixtureMedia(t, "ip.h264", 5)}}, delay: 100 * time.Millisecond}
+	p, err := dialStream(context.Background(), source, session, inventory.Streams[0], true)
+	require.NoError(t, err)
+	_ = p.Stop()
+}
+
+// slowSearchSession answers a recorded search only after a delay, as a real
+// search does once its result is complete.
+type slowSearchSession struct {
+	fakeMediaSession
+	delay time.Duration
+}
+
+func (s *slowSearchSession) Search(ctx context.Context, id uint32, start, end time.Time) ([]*native.MediaPacket, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(s.delay):
+	}
+	return s.fakeMediaSession.Search(ctx, id, start, end)
+}

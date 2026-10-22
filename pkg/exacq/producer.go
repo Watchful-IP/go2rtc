@@ -78,7 +78,7 @@ func dialStream(ctx context.Context, source *Source, client native.MediaSession,
 	probeCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	p := newProducer(source, client, stream, source.URL.Host)
-	if fallback {
+	if fallback && !source.Playback { // a recorded search returns its packets only once complete
 		silence := time.AfterFunc(silentStreamTimeout, func() { cancel(errNoVideoYet) })
 		defer silence.Stop()
 		p.onVideo = func() { silence.Stop() }
