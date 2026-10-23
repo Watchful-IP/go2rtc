@@ -28,6 +28,12 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	}
 
 	return func(packet *rtp.Packet) {
+		// Uniview NVRs put a vendor packet (reserved NAL type 10) between video
+		// pictures and reuse its sequence number for the next real packet. Decoders
+		// must ignore reserved types, so drop it before it can count as a step.
+		if len(packet.Payload) >= 2 && isReservedType((packet.Payload[0]>>1)&0x3F) {
+			return
+		}
 		lost := seen && (packet.SequenceNumber-seqNum != 1 || (fragmented && packet.Timestamp != timestamp))
 		if pending != nil {
 			// Some cameras mark a damaged picture complete just before an RTP gap.
@@ -177,6 +183,11 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 
 		handler(&clone)
 	}
+}
+
+// isReservedType reports the RSV_VCL and RSV_NVCL ranges of H.265 Table 7-1.
+func isReservedType(t byte) bool {
+	return (t >= 10 && t <= 15) || (t >= 22 && t <= 31) || (t >= 41 && t <= 47)
 }
 
 func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
