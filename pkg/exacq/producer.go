@@ -38,7 +38,6 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	candidates, err := streamCandidates(client.Inventory(), source)
 	if err == nil {
 		candidates = preferResponsive(serial, candidates)
-		err = native.CheckLicense(ctx, client)
 	}
 	for i := 0; err == nil; i++ {
 		var p *Producer
@@ -48,11 +47,11 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 		}
 		_ = client.Close()
 		if !errors.Is(err, errSilentStream) {
-			return nil, err
+			return nil, licenseReason(ctx, source, err)
 		}
 		markSilent(serial, candidates[i].ID)
 		if i == len(candidates)-1 {
-			return nil, err
+			return nil, licenseReason(ctx, source, err)
 		}
 		// A configured, enabled stream can still send nothing (an unconnected
 		// substream). Interrupting its read closed the session; try the next.
@@ -62,6 +61,23 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	}
 	_ = client.Close()
 	return nil, err
+}
+
+// licenseReason replaces a failed start's error with the recorder's licence
+// problem, if it has one. The licence is read only after a failure, so a
+// working stream never waits for it.
+func licenseReason(ctx context.Context, source *Source, failure error) error {
+	client, err := native.Connect(ctx, source.options())
+	if err != nil {
+		return failure
+	}
+	defer client.Close()
+	if err = native.CheckLicense(ctx, client); err != nil {
+		if e := native.AsError(err); e != nil && e.Phase == native.PhaseLicense && e.Code == native.CodeStreamUnavailable {
+			return err
+		}
+	}
+	return failure
 }
 
 // silentStreamTimeout bounds waiting for a stream's first packet when other
