@@ -25,10 +25,11 @@ import (
 	"github.com/AlexxIT/go2rtc/internal/http"
 	"github.com/AlexxIT/go2rtc/internal/isapi"
 	"github.com/AlexxIT/go2rtc/internal/ivideon"
+	"github.com/AlexxIT/go2rtc/internal/kasa"
 	"github.com/AlexxIT/go2rtc/internal/milestone"
 	"github.com/AlexxIT/go2rtc/internal/mjpeg"
 	"github.com/AlexxIT/go2rtc/internal/mp4"
-	"github.com/AlexxIT/go2rtc/internal/mpegts"
+	"github.com/AlexxIT/go2rtc/internal/mpeg"
 	"github.com/AlexxIT/go2rtc/internal/multitrans"
 	"github.com/AlexxIT/go2rtc/internal/nest"
 	"github.com/AlexxIT/go2rtc/internal/ngrok"
@@ -54,7 +55,7 @@ import (
 
 func main() {
 	// version will be set later from -buildvcs info, this used only as fallback
-	app.Version = "1.9.14-watchful.8"
+	app.Version = "1.9.15"
 
 	type module struct {
 		name string
@@ -99,8 +100,9 @@ func main() {
 		{"gopro", gopro.Init},
 		{"isapi", isapi.Init},
 		{"ivideon", ivideon.Init},
+		{"kasa", kasa.Init},
 		{"milestone", milestone.Init},
-		{"mpegts", mpegts.Init},
+		{"mpegts", mpeg.Init},
 		{"multitrans", multitrans.Init},
 		{"nest", nest.Init},
 		{"ring", ring.Init},

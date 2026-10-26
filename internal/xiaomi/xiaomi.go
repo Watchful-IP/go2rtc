@@ -16,6 +16,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi/crypto"
+	"github.com/rs/zerolog"
 )
 
 func Init() {
@@ -26,7 +27,7 @@ func Init() {
 
 	tokens = v.Cfg
 
-	log := app.GetLogger("xiaomi")
+	log = app.GetLogger("xiaomi")
 
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
 		u, err := url.Parse(rawURL)
@@ -48,6 +49,8 @@ func Init() {
 
 	api.HandleFunc("api/xiaomi", apiXiaomi)
 }
+
+var log zerolog.Logger
 
 var tokens map[string]string
 var clouds map[string]*xiaomi.Cloud
@@ -250,6 +253,8 @@ func apiDeviceList(w http.ResponseWriter, r *http.Request) {
 			List []*Device `json:"list"`
 		}
 
+		log.Trace().Str("user", user).Msgf("[xiaomi] devices list: %s", res)
+
 		if err = json.Unmarshal(res, &v); err != nil {
 			return err
 		}
@@ -257,7 +262,7 @@ func apiDeviceList(w http.ResponseWriter, r *http.Request) {
 		var items []*api.Source
 
 		for _, device := range v.List {
-			if !strings.Contains(device.Model, ".camera.") && !strings.Contains(device.Model, ".cateye.") {
+			if !device.HasCamera() {
 				continue
 			}
 			items = append(items, &api.Source{
@@ -282,6 +287,12 @@ type Device struct {
 	Model string `json:"model"`
 	MAC   string `json:"mac"`
 	IP    string `json:"localip"`
+}
+
+func (d *Device) HasCamera() bool {
+	return strings.Contains(d.Model, ".camera.") ||
+		strings.Contains(d.Model, ".cateye.") ||
+		strings.Contains(d.Model, ".feeder.")
 }
 
 var auth *xiaomi.Cloud
