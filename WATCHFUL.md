@@ -22,6 +22,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 |---|---|---|
 | h265: filter malformed SEI and opt in to conservative recovery | fork-only | Uniview malformed metadata and complete-marked frames immediately preceding RTP loss cause hardware decode failures |
 | Fix H265 RTP recovery after packet loss | [#2479](https://github.com/AlexxIT/go2rtc/pull/2479) (ours, open) | Corrupt HEVC after loss until next keyframe |
+| h265: drop reserved NAL types before the sequence check | fork-only; fold into #2479 | Uniview NVRs insert a 407-byte type-10 packet between pictures and reuse its sequence number, so #2479 saw loss every ~200 ms and held H.265 live until the next keyframe |
 | h265: de-aggregate RFC 7798 Aggregation Packets | [#2296](https://github.com/AlexxIT/go2rtc/pull/2296) | `ffmpeg:` sources emit APs for VPS/SPS/PPS |
 | h265: guard RepairAVCC against truncated AVCC | [#2419](https://github.com/AlexxIT/go2rtc/pull/2419) | Panic on empty packet kills the sidecar |
 | h265: bounds safety in hvcC parsing (mpeg4.go hunk only) | [#2191](https://github.com/AlexxIT/go2rtc/pull/2191) | Panic on short hvcC from MP4/HLS sources |
