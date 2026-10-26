@@ -34,6 +34,9 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
+
+	// Watchful: open while a source swap is in flight; closed when it ends.
+	swapping chan struct{}
 }
 
 const SourceTemplate = "{input}"
@@ -86,13 +89,20 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.state == stateNone {
-		return nil, errors.New("get track from none state")
-	}
+	for {
+		if p.state == stateNone {
+			return nil, errors.New("get track from none state")
+		}
 
-	for _, track := range p.receivers {
-		if track.Codec == codec {
-			return track, nil
+		for _, track := range p.receivers {
+			if track.Codec == codec {
+				return track, nil
+			}
+		}
+
+		// Watchful: a track added mid-swap would belong to the connection being retired.
+		if !p.waitForSwap() {
+			break
 		}
 	}
 
@@ -113,6 +123,9 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 func (p *Producer) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiver) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	for p.waitForSwap() {
+	}
 
 	if p.state == stateNone {
 		return errors.New("add track from none state")

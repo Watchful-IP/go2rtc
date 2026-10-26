@@ -3,6 +3,7 @@ package milestone
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -355,5 +356,9 @@ func (p *Playback) sleep(d time.Duration) error {
 func (p *Playback) Stop() error {
 	p.cancel()
 	p.video.End(context.Canceled)
-	return p.Connection.Stop()
+	// Start closes the client when playback ends, so the transport may already be closed.
+	if err := p.Connection.Stop(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }

@@ -35,7 +35,13 @@ func NewReceiver(media *Media, codec *Codec) *Receiver {
 	r.Input = func(packet *Packet) {
 		r.Bytes += len(packet.Payload)
 		r.Packets++
-		for _, child := range r.childs {
+		// Watchful: children are added and moved while packets flow (consumers joining,
+		// reconnects, source swaps), so take the list under its lock. Nothing writes into a
+		// slice already handed out (RemoveChild copies), so iterating it unlocked is safe.
+		r.mu.Lock()
+		childs := r.childs
+		r.mu.Unlock()
+		for _, child := range childs {
 			child.Input(packet)
 		}
 	}
@@ -237,8 +243,8 @@ func (s *Sender) MarshalJSON() ([]byte, error) {
 		Packets: s.Packets,
 		Drops:   s.Drops,
 	}
-	if s.parent != nil {
-		v.Parent = s.parent.id
+	if parent := s.getParent(); parent != nil {
+		v.Parent = parent.id
 	}
 	return json.Marshal(v)
 }
