@@ -32,6 +32,21 @@ type Node struct {
 	parent *Node
 
 	mu sync.Mutex
+	// Watchful: parent changes when consumers move between connections while they close.
+	// Not mu: a lossless Sender holds mu while blocked on a full buffer.
+	parentMu sync.Mutex
+}
+
+func (n *Node) setParent(parent *Node) {
+	n.parentMu.Lock()
+	n.parent = parent
+	n.parentMu.Unlock()
+}
+
+func (n *Node) getParent() *Node {
+	n.parentMu.Lock()
+	defer n.parentMu.Unlock()
+	return n.parent
 }
 
 func (n *Node) WithParent(parent *Node) *Node {
@@ -44,14 +59,17 @@ func (n *Node) AppendChild(child *Node) {
 	n.childs = append(n.childs, child)
 	n.mu.Unlock()
 
-	child.parent = n
+	child.setParent(n)
 }
 
 func (n *Node) RemoveChild(child *Node) {
 	n.mu.Lock()
 	for i, ch := range n.childs {
 		if ch == child {
-			n.childs = append(n.childs[:i], n.childs[i+1:]...)
+			// Watchful: build a new slice rather than shift in place, so a packet loop still
+			// ranging over the old one never sees its elements move.
+			childs := make([]*Node, 0, len(n.childs)-1)
+			n.childs = append(append(childs, n.childs[:i]...), n.childs[i+1:]...)
 			break
 		}
 	}
@@ -59,15 +77,21 @@ func (n *Node) RemoveChild(child *Node) {
 }
 
 func (n *Node) Close() {
-	if parent := n.parent; parent != nil {
+	if parent := n.getParent(); parent != nil {
 		parent.RemoveChild(n)
 
-		if len(parent.childs) == 0 {
+		parent.mu.Lock()
+		empty := len(parent.childs) == 0
+		parent.mu.Unlock()
+		if empty {
 			parent.Close()
 		}
 	} else {
-		for _, childs := range n.childs {
-			childs.Close()
+		n.mu.Lock()
+		childs := n.childs
+		n.mu.Unlock()
+		for _, child := range childs {
+			child.Close()
 		}
 	}
 }
@@ -83,6 +107,6 @@ func MoveNode(dst, src *Node) {
 	dst.mu.Unlock()
 
 	for _, child := range childs {
-		child.parent = dst
+		child.setParent(dst)
 	}
 }

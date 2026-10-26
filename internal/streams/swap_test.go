@@ -18,6 +18,7 @@ type scriptedSource struct {
 	started chan struct{}
 	stopped chan struct{}
 	once    sync.Once
+	begun   sync.Once
 }
 
 func newScriptedSource() *scriptedSource {
@@ -33,7 +34,7 @@ func newScriptedSource() *scriptedSource {
 }
 
 func (s *scriptedSource) Start() error {
-	close(s.started)
+	s.begun.Do(func() { close(s.started) })
 	for {
 		select {
 		case packet := <-s.feed:
@@ -252,6 +253,66 @@ func TestBreakFirstRedialsTheOldSourceWhenTheNewOneFails(t *testing.T) {
 	require.True(t, a.isStopped())
 	require.Equal(t, []string{"a1", "a1"}, cons.trace()) // the second from the redialled source
 	require.Equal(t, "scripted:a", stream.producers[0].url)
+}
+
+func TestBreakFirstHoldsConsumersUntilTheNewKeyframe(t *testing.T) {
+	stream, cons, a, b := swapRig(t)
+	a.send(pkt(1, 1, true, pFrame...))
+
+	swapped := make(chan error, 1)
+	go func() { swapped <- stream.Swap("scripted:b", time.Second, true) }()
+	<-b.started
+	b.send(pkt(2, 1, true, pFrame...), pkt(2, 2, false, sps...), pkt(2, 3, true, idrTail...))
+
+	require.NoError(t, <-swapped)
+	require.Equal(t, []string{"a1", "b2", "b3"}, cons.trace())
+}
+
+func TestAReplacementThatDropsBeforeTheSwapCommitsIsStillReconnected(t *testing.T) {
+	stream, cons, a, b := swapRig(t)
+	a.send(pkt(1, 1, true, pFrame...))
+	redialled := newScriptedSource()
+
+	swapped := make(chan error, 1)
+	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second, false) }()
+	<-b.started
+	HandleFunc("scripted", func(string) (core.Producer, error) { return redialled, nil })
+	b.send(pkt(2, 1, true, sps...))
+	_ = b.Stop()
+
+	require.NoError(t, <-swapped)
+	select {
+	case <-redialled.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the swapped-in connection was not reconnected")
+	}
+	redialled.send(pkt(3, 1, true, pFrame...))
+	require.Equal(t, []string{"a1", "b1", "a1"}, cons.trace()) // the last from the redialled source
+}
+
+func TestANewTrackRequestedMidSwapWaitsForTheSwap(t *testing.T) {
+	stream, _, a, b := swapRig(t)
+	a.send(pkt(1, 1, true, pFrame...))
+	prod := stream.producers[0]
+
+	swapped := make(chan error, 1)
+	go func() { swapped <- stream.Swap("scripted:b", 2*time.Second, false) }()
+	<-b.started
+
+	media := b.Medias[0]
+	added := make(chan *core.Receiver, 1)
+	go func() {
+		track, err := prod.GetTrack(media, &core.Codec{Name: core.CodecH264, ClockRate: 90000, PayloadType: 96})
+		require.NoError(t, err)
+		added <- track
+	}()
+	time.Sleep(50 * time.Millisecond)
+	require.Empty(t, added)
+
+	b.send(pkt(2, 1, true, sps...))
+	require.NoError(t, <-swapped)
+	track := <-added
+	require.Contains(t, b.Receivers, track)
 }
 
 func TestStartsKeyframe(t *testing.T) {

@@ -85,6 +85,15 @@ func (c *Cutover) Moved() bool {
 	return c.state == cutoverMoved
 }
 
+// MoveNow moves the consumers without waiting any longer for a keyframe.
+func (c *Cutover) MoveNow() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state == cutoverWaiting || c.state == cutoverHolding {
+		c.moveLocked()
+	}
+}
+
 // Abort leaves the consumers where they are. It returns false when they already moved.
 func (c *Cutover) Abort() bool {
 	c.mu.Lock()
@@ -191,6 +200,6 @@ func appendChildren(dst, src *Node) {
 	dst.mu.Unlock()
 
 	for _, child := range childs {
-		child.parent = dst
+		child.setParent(dst)
 	}
 }

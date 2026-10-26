@@ -22,6 +22,7 @@ var (
 	ErrSwapNoKeyframe = errors.New("streams: no keyframe from the new source")
 	ErrSwapTracks     = errors.New("streams: new source lacks a running track")
 	ErrSwapRaced      = errors.New("streams: producer stopped or reconnected during swap")
+	ErrSwapBusy       = errors.New("streams: another swap of this source is in flight")
 )
 
 // holdForBoundary bounds how long new video waits for the old video to finish a picture.
@@ -73,7 +74,7 @@ func (s *Stream) Swap(source string, timeout time.Duration, breakFirst bool) err
 	for _, prod := range producers {
 		swap := prod.Swap
 		if breakFirst {
-			swap = func(source string, _ time.Duration) error { return prod.SwapBreakFirst(source) }
+			swap = prod.SwapBreakFirst
 		}
 		if err := swap(source, timeout); err != nil {
 			return err
@@ -92,10 +93,16 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 		p.mu.Unlock()
 		return nil
 	}
+	if p.swapping != nil {
+		p.mu.Unlock()
+		return ErrSwapBusy
+	}
+	p.swapping = make(chan struct{})
 	old := p.conn
 	receivers := append([]*core.Receiver(nil), p.receivers...)
 	senders := append([]*core.Receiver(nil), p.senders...)
 	p.mu.Unlock()
+	defer p.endSwap()
 
 	conn, err := dialProducer(url)
 	if err != nil {
@@ -107,29 +114,11 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 		_ = conn.Stop()
 		return err
 	}
-	for _, media := range conn.GetMedias() {
-		if media.Direction != core.DirectionSendonly {
-			continue
-		}
-		for _, sender := range senders {
-			if codec := media.MatchCodec(sender.Codec); codec != nil {
-				_ = conn.(core.Consumer).AddTrack(media, codec, sender)
-			}
-		}
-	}
+	addSenders(conn, senders)
 
-	var cutover *core.Cutover
-	if video >= 0 {
-		codec := pairs[video].To.Codec
-		cutover = core.NewCutover(pairs, video,
-			func(packet *core.Packet) bool { return startsKeyframe(codec, packet) },
-			func(packet *core.Packet) bool { return !codec.IsRTP() || packet.Marker },
-			holdForBoundary)
-	} else {
-		cutover = core.NewCutover(pairs, -1, nil, nil, 0)
-	}
-
-	go p.runSwapped(conn)
+	cutover := newCutover(pairs, video)
+	decided := make(chan bool, 1)
+	go p.runSwapped(conn, decided)
 	cutover.Start()
 
 	select {
@@ -137,6 +126,7 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 	case <-time.After(timeout):
 	}
 	if !cutover.Moved() && cutover.Abort() {
+		decided <- false
 		_ = conn.Stop()
 		return ErrSwapNoKeyframe
 	}
@@ -144,6 +134,7 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 	p.mu.Lock()
 	if p.conn != old || p.state != stateStart {
 		p.mu.Unlock()
+		decided <- false
 		_ = conn.Stop()
 		return ErrSwapRaced
 	}
@@ -156,6 +147,7 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 	}
 	cutover.MoveLateConsumers()
 	p.mu.Unlock()
+	decided <- true
 
 	_ = old.Stop()
 	proto, host := sourceHost(url)
@@ -164,9 +156,10 @@ func (p *Producer) Swap(source string, timeout time.Duration) error {
 }
 
 // SwapBreakFirst stops the old connection before dialling source. Consumers wait on
-// holders in between and resume at the new source's next keyframe. If source cannot
-// be dialled the old one is dialled again, so consumers are only dropped when both fail.
-func (p *Producer) SwapBreakFirst(source string) error {
+// holders in between and resume at the new source's first keyframe, or after timeout.
+// If source cannot be dialled the old one is dialled again, so consumers are only
+// dropped when both fail.
+func (p *Producer) SwapBreakFirst(source string, timeout time.Duration) error {
 	p.mu.Lock()
 	url := p.resolve(source)
 	if p.state != stateStart {
@@ -174,35 +167,31 @@ func (p *Producer) SwapBreakFirst(source string) error {
 		p.mu.Unlock()
 		return nil
 	}
+	if p.swapping != nil {
+		p.mu.Unlock()
+		return ErrSwapBusy
+	}
+	p.swapping = make(chan struct{})
 	old, oldURL := p.conn, p.url
 	receivers := append([]*core.Receiver(nil), p.receivers...)
 	senders := append([]*core.Receiver(nil), p.senders...)
-	holders := make([]*core.Node, len(receivers))
+	holders := make([]*core.Receiver, len(receivers))
 	for i, receiver := range receivers {
-		holders[i] = &core.Node{}
-		core.MoveChildren(holders[i], &receiver.Node)
+		// Never fed, so a cutover from it waits only for the new source's keyframe.
+		holders[i] = core.NewReceiver(receiver.Media, receiver.Codec)
+		core.MoveChildren(&holders[i].Node, &receiver.Node)
 	}
 	// The old worker must not redial the connection being retired.
 	p.workerID++
 	p.mu.Unlock()
+	defer p.endSwap()
 	_ = old.Stop()
 
-	conn, err := dialProducer(url)
-	var pairs []core.CutoverPair
-	if err == nil {
-		pairs, _, err = pairTracks(conn, receivers)
-		if err != nil {
-			_ = conn.Stop()
-		}
-	}
+	conn, pairs, video, err := dialPaired(url, receivers)
 	swapErr := err
 	if err != nil {
 		url = oldURL
-		if conn, err = dialProducer(url); err == nil {
-			if pairs, _, err = pairTracks(conn, receivers); err != nil {
-				_ = conn.Stop()
-			}
-		}
+		conn, pairs, video, err = dialPaired(url, receivers)
 	}
 
 	p.mu.Lock()
@@ -218,20 +207,14 @@ func (p *Producer) SwapBreakFirst(source string) error {
 		return err
 	}
 	for i := range pairs {
-		core.MoveChildren(&pairs[i].To.Node, holders[i])
-		// Consumers that bound to the stopped track while no connection was up.
-		core.MoveChildren(&pairs[i].To.Node, &receivers[i].Node)
+		pairs[i].From = holders[i]
 		p.receivers[i] = pairs[i].To
 	}
-	for _, media := range conn.GetMedias() {
-		if media.Direction != core.DirectionSendonly {
-			continue
-		}
-		for _, sender := range senders {
-			if codec := media.MatchCodec(sender.Codec); codec != nil {
-				_ = conn.(core.Consumer).AddTrack(media, codec, sender)
-			}
-		}
+	addSenders(conn, senders)
+	cutover := newCutover(pairs, video)
+	for i := range pairs {
+		// Consumers that bound to the stopped track while no connection was up.
+		core.MoveChildren(&pairs[i].To.Node, &receivers[i].Node)
 	}
 	p.conn = conn
 	p.url = url
@@ -239,13 +222,43 @@ func (p *Producer) SwapBreakFirst(source string) error {
 	p.mu.Unlock()
 
 	go p.worker(conn, workerID)
+	cutover.Start()
+	select {
+	case <-cutover.Done():
+	case <-time.After(timeout):
+		cutover.MoveNow()
+	}
 	return swapErr
 }
 
-// runSwapped is the worker for a connection started by Swap. It only reconnects once
-// the connection has become the producer's current one.
-func (p *Producer) runSwapped(conn core.Producer) {
+func (p *Producer) endSwap() {
+	p.mu.Lock()
+	close(p.swapping)
+	p.swapping = nil
+	p.mu.Unlock()
+}
+
+// waitForSwap is called with p.mu held. It reports whether it had to wait for a swap
+// to end, releasing the lock meanwhile, so the caller should re-check its state.
+func (p *Producer) waitForSwap() bool {
+	swapping := p.swapping
+	if swapping == nil {
+		return false
+	}
+	p.mu.Unlock()
+	<-swapping
+	p.mu.Lock()
+	return true
+}
+
+// runSwapped is the worker for a connection started by Swap. Even if the connection
+// ends first, it waits for the swap to commit or abort, and only reconnects a
+// connection that became the producer's current one.
+func (p *Producer) runSwapped(conn core.Producer, decided <-chan bool) {
 	err := conn.Start()
+	if !<-decided {
+		return
+	}
 
 	p.mu.Lock()
 	current := p.conn == conn && p.state == stateStart
@@ -263,6 +276,43 @@ func (p *Producer) runSwapped(conn core.Producer) {
 		return
 	}
 	p.reconnect(workerID, 0)
+}
+
+func newCutover(pairs []core.CutoverPair, video int) *core.Cutover {
+	if video < 0 {
+		return core.NewCutover(pairs, -1, nil, nil, 0)
+	}
+	codec := pairs[video].To.Codec
+	return core.NewCutover(pairs, video,
+		func(packet *core.Packet) bool { return startsKeyframe(codec, packet) },
+		func(packet *core.Packet) bool { return !codec.IsRTP() || packet.Marker },
+		holdForBoundary)
+}
+
+func dialPaired(url string, receivers []*core.Receiver) (core.Producer, []core.CutoverPair, int, error) {
+	conn, err := dialProducer(url)
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	pairs, video, err := pairTracks(conn, receivers)
+	if err != nil {
+		_ = conn.Stop()
+		return nil, nil, -1, err
+	}
+	return conn, pairs, video, nil
+}
+
+func addSenders(conn core.Producer, senders []*core.Receiver) {
+	for _, media := range conn.GetMedias() {
+		if media.Direction != core.DirectionSendonly {
+			continue
+		}
+		for _, sender := range senders {
+			if codec := media.MatchCodec(sender.Codec); codec != nil {
+				_ = conn.(core.Consumer).AddTrack(media, codec, sender)
+			}
+		}
+	}
 }
 
 func (p *Producer) resolve(source string) string {
