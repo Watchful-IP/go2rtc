@@ -1,8 +1,8 @@
 # Watchful fork of go2rtc
 
 Watchful.Streaming runs go2rtc as a loopback sidecar (RTSP/HLS/MP4 in, fMP4
-over WebSocket out). Upstream review has slowed (last release January 2026,
-roughly 180 open PRs), so this fork carries the fixes we need ahead of
+over WebSocket out). Upstream review has slowed (v1.9.15 in October 2026 was the
+first release since January, roughly 180 open PRs), so this fork carries the fixes we need ahead of
 upstream and picks up community reliability and compatibility patches.
 
 Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
@@ -12,8 +12,9 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 - `master` — pristine mirror of upstream master. Never commit here. Sync with
   GitHub's "Sync fork" button or `git push origin upstream/master:master`.
 - `watchful` — default branch and what ships. Latest upstream **release tag**
-  plus carried patches, one commit per patch, so `git log v1.9.14..watchful`
-  is the full diff against upstream.
+  merged in, plus carried patches. Its history is never rewritten.
+  `git log --no-merges v1.9.15..watchful` lists the fork's commits and
+  `git diff v1.9.15 watchful` is the full diff against upstream.
 - `jmw/*` — branches behind PRs opened against upstream.
 
 ## Carried patches
@@ -34,7 +35,7 @@ Remote naming below: `upstream` = AlexxIT/go2rtc, `origin` = Watchful-IP/go2rtc.
 | tcp: RSA CBC cipher suites for older Axis | [#2383](https://github.com/AlexxIT/go2rtc/pull/2383) | rtsps to older Axis firmware fails TLS |
 | tcp: RFC 7616 digest auth (SHA-256, qop) | [#2451](https://github.com/AlexxIT/go2rtc/pull/2451) | Newer Hikvision/Axis firmware rejects MD5-only |
 | h265: route AP truncation through loss-recovery reset | fork-only | Keeps #2296 consistent with #2479 |
-| Bump x/net, x/crypto, pion/dtls, pion/stun | replaces #2449, #2382 | Published advisories |
+| creds: fix userinfo tests left stale by v1.9.15 | fork-only | Upstream #2051 moved `StripUserinfo` into `creds.SecretString` but left `pkg/core`'s test calling the removed function and `TestString` expecting `***:***` |
 | Native fMP4/CMAF HLS ingest | fork-only, W-963 | H.264/HEVC/AAC, AES-128, bounded multi-track demuxing; [evidence and limits](pkg/hls/README.md) |
 | streams: lock the API map access | streams half of [#2444](https://github.com/AlexxIT/go2rtc/pull/2444) | Concurrent `DELETE /api/streams` crashed the process (`concurrent map writes`); upstream closed the PR over its unrelated `app.Info` half |
 | mp4: JPEG track on `stream.mp4?video=jpeg` | fork-only | Multipart JPEG output drops frame timestamps, so a lagging recorder stamped stale frames on arrival and stored slow motion. The fMP4 track keeps each frame's source clock (receive time for multipart, RTP clock for RTP JPEG), including gaps over one second and source clock resets |
@@ -54,15 +55,18 @@ Add a row to the table above. Good candidates fix panics, leaks, or parsing
 on the RTSP → fMP4 path, preserve default behaviour, and come with tests.
 Skip vendor sources we don't run (Xiaomi, Nest, HomeKit, Wyze, WebRTC).
 
-## Rebasing onto a new upstream release
+## Merging a new upstream release
 
 ```bash
 git fetch upstream --tags
-git rebase --onto vX.Y.Z v1.9.14 watchful   # old base → new base
+git switch -c jmw/merge-upstream-X.Y.Z origin/watchful
+git merge --no-ff vX.Y.Z -m "Merge upstream vX.Y.Z"
 ```
 
-Drop any carried commit upstream has merged, re-run the CI test set, update
-the table, then release.
+Merge release tags, not upstream `master`. Where upstream has absorbed a
+carried patch, take upstream's side and remove its row from the table.
+Describe each conflict resolution in the merge commit message, re-run the CI
+test set, and open a PR against `watchful`. Then release.
 
 ## Releasing
 
@@ -94,7 +98,8 @@ the table, then release.
   [#2427](https://github.com/AlexxIT/go2rtc/pull/2427) keyframe-handler leaks.
   Only affect `frame.jpeg` and `stream.mp4`, which Watchful.Streaming doesn't call.
 - [#2455](https://github.com/AlexxIT/go2rtc/pull/2455) credential redaction.
-  Draft and conflicts with v1.9.14; revisit after the next rebase.
+  Still a draft. v1.9.15 already strips URL userinfo in `creds.SecretString`
+  (#2051); check what #2455 adds beyond that before carrying.
 - [#2253](https://github.com/AlexxIT/go2rtc/pull/2253) hvc1 sample entry. Same
   change as our closed #2464; did not fix DSS playback.
 - [#1943](https://github.com/AlexxIT/go2rtc/pull/1943) RTSP timestamp reset on
