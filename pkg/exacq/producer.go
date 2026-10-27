@@ -30,7 +30,8 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := native.Connect(ctx, source.options(source.liveStream()))
+	started, trace := time.Now(), &native.Trace{}
+	client, err := native.Connect(ctx, source.options(source.liveStream(), trace))
 	if err != nil {
 		return nil, err
 	}
@@ -45,8 +46,10 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	}
 	for i := 0; err == nil; i++ {
 		var p *Producer
+		probing := time.Now()
 		p, err = dialStream(ctx, source, client, candidates[i], i < len(candidates)-1)
 		if err == nil {
+			p.Startup = startup(trace, started, probing, p)
 			return p, nil
 		}
 		_ = client.Close()
@@ -59,7 +62,7 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 		}
 		// A configured, enabled stream can still send nothing (an unconnected
 		// substream). Interrupting its read closed the session; try the next.
-		if client, err = native.Connect(ctx, source.options(candidates[i+1].ID)); err != nil {
+		if client, err = native.Connect(ctx, source.options(candidates[i+1].ID, trace)); err != nil {
 			return nil, err
 		}
 	}
@@ -71,7 +74,7 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 // problem, if it has one. The licence is read only after a failure, so a
 // working stream never waits for it.
 func licenseReason(ctx context.Context, source *Source, failure error) error {
-	client, err := native.Connect(ctx, source.options(0))
+	client, err := native.Connect(ctx, source.options(0, nil))
 	if err != nil {
 		return failure
 	}
@@ -136,6 +139,9 @@ type Producer struct {
 	last      time.Time
 
 	onVideo func() // called once, on the live stream's first packet
+
+	// Startup is how this producer's start was spent, for logs.
+	Startup Startup `json:"startup"`
 
 	cursor        time.Time
 	frames        []*native.MediaPacket
@@ -404,6 +410,23 @@ func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error
 	p.frames[p.index] = nil
 	p.index++
 	return packet, nil
+}
+
+// Startup breaks down a producer's start. Phases are summed over every
+// session the start opened; Video is the wait for the first decodable picture
+// after the last session was ready.
+type Startup struct {
+	Total    time.Duration        `json:"total"`
+	Video    time.Duration        `json:"video"`
+	Phases   []native.PhaseTiming `json:"phases"`
+	Sessions int                  `json:"sessions"`
+	Stream   uint32               `json:"stream"`
+	Bytes    int                  `json:"bytes"`
+}
+
+func startup(trace *native.Trace, started, probing time.Time, p *Producer) Startup {
+	return Startup{Total: time.Since(started), Video: time.Since(probing), Phases: trace.Phases(),
+		Sessions: trace.Connects(), Stream: p.stream.ID, Bytes: p.Recv}
 }
 
 // searched is one finished recorded search ending at end.

@@ -174,9 +174,9 @@ func (s *Source) Redacted() string {
 
 // options requests live video on stream (when nonzero) with the login, so its
 // media follows the configuration without another round trip.
-func (s *Source) options(stream uint32) native.Options {
+func (s *Source) options(stream uint32, trace *native.Trace) native.Options {
 	password, _ := s.URL.User.Password()
-	return native.Options{Address: s.URL.Host, Username: s.URL.User.Username(), Password: password, PrestartLive: stream}
+	return native.Options{Address: s.URL.Host, Username: s.URL.User.Username(), Password: password, PrestartLive: stream, Trace: trace}
 }
 
 // liveStream is the live stream known before the inventory is read: the named

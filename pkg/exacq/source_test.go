@@ -19,7 +19,7 @@ func TestSource(t *testing.T) {
 	if strings.Contains(s.Redacted(), "user:") {
 		t.Fatal("username exposed")
 	}
-	if s.options(0).Password != "p@ss" {
+	if s.options(0, nil).Password != "p@ss" {
 		t.Fatal("password not decoded")
 	}
 }
