@@ -161,9 +161,23 @@ func (s *Source) Redacted() string {
 	return u.String()
 }
 
-func (s *Source) options() native.Options {
+// options requests live video on stream (when nonzero) with the login, so its
+// media follows the configuration without another round trip.
+func (s *Source) options(stream uint32) native.Options {
 	password, _ := s.URL.User.Password()
-	return native.Options{Address: s.URL.Host, Username: s.URL.User.Username(), Password: password}
+	return native.Options{Address: s.URL.Host, Username: s.URL.User.Username(), Password: password, PrestartLive: stream}
+}
+
+// liveStream is the live stream known before the inventory is read: the named
+// stream or the camera's own. select=lowest needs the inventory to choose.
+func (s *Source) liveStream() uint32 {
+	switch {
+	case s.Playback || s.SelectLowest:
+		return 0
+	case s.Stream != 0:
+		return s.Stream
+	}
+	return s.Camera
 }
 
 func failf(code native.Code, phase, format string, args ...any) error {

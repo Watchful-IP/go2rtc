@@ -19,7 +19,7 @@ func TestSource(t *testing.T) {
 	if strings.Contains(s.Redacted(), "user:") {
 		t.Fatal("username exposed")
 	}
-	if s.options().Password != "p@ss" {
+	if s.options(0).Password != "p@ss" {
 		t.Fatal("password not decoded")
 	}
 }
@@ -39,6 +39,23 @@ func TestInvalidSource(t *testing.T) {
 			t.Fatalf("accepted %s", strings.ReplaceAll(raw, "secret", "xxx"))
 		} else if strings.Contains(err.Error(), "secret") {
 			t.Fatal("error exposed credentials")
+		}
+	}
+}
+
+func TestLiveStreamKnownBeforeInventory(t *testing.T) {
+	for raw, want := range map[string]uint32{
+		"exacq://u:p@r/459264":                           459264,
+		"exacq://u:p@r/4784640?stream=541655552":         541655552,
+		"exacq://u:p@r/4784640?select=lowest":            0,
+		"exacq://u:p@r/459264?start=1000000&end=1060000": 0,
+	} {
+		s, err := ParseURL(raw)
+		if err != nil {
+			t.Fatal(raw, err)
+		}
+		if got := s.liveStream(); got != want {
+			t.Fatalf("%s: prestart %d, want %d", raw, got, want)
 		}
 	}
 }

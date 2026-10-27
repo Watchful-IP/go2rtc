@@ -30,7 +30,7 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := native.Connect(ctx, source.options())
+	client, err := native.Connect(ctx, source.options(source.liveStream()))
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 		}
 		// A configured, enabled stream can still send nothing (an unconnected
 		// substream). Interrupting its read closed the session; try the next.
-		if client, err = native.Connect(ctx, source.options()); err != nil {
+		if client, err = native.Connect(ctx, source.options(candidates[i+1].ID)); err != nil {
 			return nil, err
 		}
 	}
@@ -67,7 +67,7 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 // problem, if it has one. The licence is read only after a failure, so a
 // working stream never waits for it.
 func licenseReason(ctx context.Context, source *Source, failure error) error {
-	client, err := native.Connect(ctx, source.options())
+	client, err := native.Connect(ctx, source.options(0))
 	if err != nil {
 		return failure
 	}
