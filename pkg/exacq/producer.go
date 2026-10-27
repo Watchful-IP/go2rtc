@@ -140,6 +140,7 @@ type Producer struct {
 	cursor        time.Time
 	frames        []*native.MediaPacket
 	index         int
+	pending       chan searched // the next window, fetched while this one plays
 	previousBatch map[[32]byte]struct{}
 }
 
@@ -358,19 +359,32 @@ func (p *Producer) checkAdvance(f *frame) error {
 
 func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error) {
 	for p.index >= len(p.frames) {
-		if !p.cursor.Before(p.source.End) {
-			return nil, errPlaybackEnd
+		var r searched
+		if p.pending != nil {
+			select {
+			case r = <-p.pending:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			p.pending = nil
+		} else {
+			if !p.cursor.Before(p.source.End) {
+				return nil, errPlaybackEnd
+			}
+			r = p.search(ctx, p.cursor)
 		}
-		end := p.cursor.Add(native.SearchSpan(p.stream.Format))
-		if end.After(p.source.End) {
-			end = p.source.End
+		if r.err != nil {
+			return nil, r.err
 		}
-		frames, err := p.client.Search(ctx, p.stream.ID, p.cursor, end)
-		if err != nil {
-			return nil, err
+		frames := p.dropRepeated(r.frames)
+		p.frames, p.index, p.cursor = frames, 0, r.end
+		if p.cursor.Before(p.source.End) {
+			// Fetch the next window while this one plays, so a window boundary
+			// costs no stall. The producer's context outlives the probe's.
+			pending, start := make(chan searched, 1), p.cursor
+			p.pending = pending
+			go func() { pending <- p.search(p.ctx, start) }()
 		}
-		frames = p.dropRepeated(frames)
-		p.frames, p.index, p.cursor = frames, 0, end
 		if !p.assembled {
 			if index := playbackStartIndex(frames, p.source.Start); index > 0 {
 				// Whole-second searches can return more than one preceding GOP.
@@ -378,7 +392,7 @@ func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error
 				for _, frame := range frames[:index] {
 					copy := *frame
 					copy.Seconds, copy.Milliseconds = 0, 0
-					if _, err = p.state.Prepare(&copy); err != nil {
+					if _, err := p.state.Prepare(&copy); err != nil {
 						return nil, err
 					}
 				}
@@ -390,6 +404,33 @@ func (p *Producer) nextRecorded(ctx context.Context) (*native.MediaPacket, error
 	p.frames[p.index] = nil
 	p.index++
 	return packet, nil
+}
+
+// searched is one finished recorded search ending at end.
+type searched struct {
+	frames []*native.MediaPacket
+	end    time.Time
+	err    error
+}
+
+// firstSearchSpan bounds the first window: the recorder returns a search only
+// once complete, so a short one starts playback sooner. Its native preroll
+// still carries the GOP needed to decode the start.
+const firstSearchSpan = 2 * time.Second
+
+// search fetches the window starting at start. It reads only immutable
+// producer fields, so a prefetch can run it beside the playing window.
+func (p *Producer) search(ctx context.Context, start time.Time) searched {
+	span := native.SearchSpan(p.stream.Format)
+	if start.Equal(p.source.Start) && span > firstSearchSpan {
+		span = firstSearchSpan
+	}
+	end := start.Add(span)
+	if end.After(p.source.End) {
+		end = p.source.End
+	}
+	frames, err := p.client.Search(ctx, p.stream.ID, start, end)
+	return searched{frames, end, err}
 }
 
 // dropRepeated removes pictures the previous search already returned:
