@@ -58,4 +58,9 @@ func TestLiveStreamKnownBeforeInventory(t *testing.T) {
 			t.Fatalf("%s: prestart %d, want %d", raw, got, want)
 		}
 	}
+	for _, raw := range []string{"exacq://u:p@r/1?prefer=2", "exacq://u:p@r/1?select=lowest&prefer=0", "exacq://u:p@r/1?stream=3&prefer=2"} {
+		if _, err := ParseURL(raw); err == nil {
+			t.Fatalf("%s: accepted", raw)
+		}
+	}
 }

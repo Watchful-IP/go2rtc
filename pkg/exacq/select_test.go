@@ -35,7 +35,7 @@ func TestLowestStream(t *testing.T) {
 		{ID: 201, ParentCameraID: 201, Format: 0, Width: 640, Height: 360, Enabled: true},
 		{ID: 301, ParentCameraID: 301, Format: 5, Width: 640, Height: 360, Enabled: false},
 		{ID: 401, ParentCameraID: 401, Format: 3, Width: 640, Height: 360, Enabled: true},
-	}}
+	}, Cameras: []native.Camera{{ID: 101}, {ID: 102}, {ID: 103}, {ID: 104}, {ID: 201}, {ID: 301}, {ID: 401}}}
 	streams, err := streamCandidates(inventory, &Source{Camera: 101, SelectLowest: true})
 	stream := streams[0]
 	require.NoError(t, err)

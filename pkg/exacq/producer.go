@@ -38,6 +38,10 @@ func DialContext(ctx context.Context, rawURL string) (core.Producer, error) {
 	candidates, err := streamCandidates(client.Inventory(), source)
 	if err == nil {
 		candidates = preferResponsive(serial, candidates)
+		if source.Prefer != 0 && candidates[0].ID != source.Prefer {
+			// The hint is stale: stop its media before starting the chosen stream.
+			err = client.StopLive(source.Prefer)
+		}
 	}
 	for i := 0; err == nil; i++ {
 		var p *Producer

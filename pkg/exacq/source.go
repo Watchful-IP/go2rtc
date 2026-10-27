@@ -15,17 +15,20 @@ import (
 
 // Source identifies a camera and an optional finite recording interval.
 //
-// exacq://user:password@recorder[:22609]/camera[?stream=ID|select=lowest]
+// exacq://user:password@recorder[:22609]/camera[?stream=ID|select=lowest[&prefer=ID]]
 // exacq://user:password@recorder[:22609]/camera?start=epochms&end=epochms&speed=1
 //
 // Recording gaps are preserved. Camera and stream IDs are the recorder's
 // inventory IDs. select=lowest picks the camera's smallest enabled H.264/H.265
-// stream from the session inventory.
+// stream from the session inventory. prefer names the stream select=lowest is
+// expected to pick, so it can be requested with the login; the inventory still
+// decides, and an unwanted prefer is dropped.
 type Source struct {
 	URL          *url.URL
 	Camera       uint32
 	Stream       uint32
 	SelectLowest bool
+	Prefer       uint32
 	Playback     bool
 	Start, End   time.Time
 	Speed        float64
@@ -79,7 +82,7 @@ func parseURL(rawURL string) (*Source, error) {
 			return nil, errors.New("exacq: duplicate source parameter")
 		}
 		switch key {
-		case "stream", "select", "start", "end", "speed", "gaps":
+		case "stream", "select", "prefer", "start", "end", "speed", "gaps":
 		default:
 			return nil, errors.New("exacq: unsupported source parameter")
 		}
@@ -97,6 +100,14 @@ func parseURL(rawURL string) (*Source, error) {
 			return nil, errors.New("exacq: stream and select=lowest are mutually exclusive")
 		}
 		s.SelectLowest = true
+	}
+	if q.Has("prefer") {
+		if !s.SelectLowest {
+			return nil, errors.New("exacq: prefer requires select=lowest")
+		}
+		if s.Prefer, err = parseID(q.Get("prefer")); err != nil {
+			return nil, errors.New("exacq: invalid preferred stream ID")
+		}
 	}
 	if q.Has("start") || q.Has("end") {
 		if !q.Has("start") || !q.Has("end") {
@@ -169,11 +180,13 @@ func (s *Source) options(stream uint32) native.Options {
 }
 
 // liveStream is the live stream known before the inventory is read: the named
-// stream or the camera's own. select=lowest needs the inventory to choose.
+// stream, the camera's own, or select=lowest's prefer hint.
 func (s *Source) liveStream() uint32 {
 	switch {
-	case s.Playback || s.SelectLowest:
+	case s.Playback:
 		return 0
+	case s.SelectLowest:
+		return s.Prefer
 	case s.Stream != 0:
 		return s.Stream
 	}
