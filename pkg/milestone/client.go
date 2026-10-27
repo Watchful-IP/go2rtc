@@ -24,7 +24,7 @@ var reGUID = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[
 // Source is a parsed milestone:// URL.
 //
 //	milestone[s|x]://recorder[:7563]/<camera-guid>?token=<connection-token>
-//	  [&stream=<stream-guid>][&start=<time>[&end=<time>][&speed=<x>]][&jpeg=1]
+//	  [&stream=<stream-guid>][&mic=<microphone-guid>][&start=<time>[&end=<time>][&speed=<x>]][&jpeg=1]
 //
 // milestones verifies the recorder certificate, milestonex does not.
 // Times are recorder clock: unix milliseconds or RFC 3339.
@@ -32,6 +32,7 @@ type Source struct {
 	URL    *url.URL
 	Camera string
 	Stream string
+	Mic    string // microphone whose live audio joins the video
 	Token  string
 	JPEG   bool
 
@@ -60,6 +61,7 @@ func ParseURL(rawURL string) (*Source, error) {
 		URL:    u,
 		Camera: strings.Trim(u.Path, "/"),
 		Stream: q.Get("stream"),
+		Mic:    q.Get("mic"),
 		Token:  q.Get("token"),
 		JPEG:   q.Get("jpeg") == "1",
 		Speed:  1,
@@ -69,6 +71,9 @@ func ParseURL(rawURL string) (*Source, error) {
 	}
 	if s.Stream != "" && !reGUID.MatchString(s.Stream) {
 		return nil, errors.New("milestone: stream must be a GUID")
+	}
+	if s.Mic != "" && !reGUID.MatchString(s.Mic) {
+		return nil, errors.New("milestone: mic must be a GUID")
 	}
 	if s.Token == "" {
 		return nil, errors.New("milestone: token is required")
