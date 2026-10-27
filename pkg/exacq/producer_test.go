@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 )
 
 type fakeMediaSession struct {
+	mu        sync.Mutex // Search runs on the prefetch goroutine
 	inventory *native.Inventory
 	live      []*native.MediaPacket
 	batches   [][]*native.MediaPacket
@@ -45,6 +47,8 @@ func (s *fakeMediaSession) Search(ctx context.Context, id uint32, start, end tim
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.selected = id
 	s.requests = append(s.requests, [2]time.Time{start, end})
 	if len(s.batches) == 0 {
@@ -426,6 +430,28 @@ func TestPlaybackDisconnectIsNotACleanEnd(t *testing.T) {
 	err = p.Start()
 	require.ErrorIs(t, err, lost, "a truncated clip must fail, not end cleanly")
 	require.ErrorIs(t, p.video.EndError(), lost)
+}
+
+func (s *fakeMediaSession) searched() [][2]time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][2]time.Time(nil), s.requests...)
+}
+
+// The first window is short, so playback starts sooner, and the next window
+// is fetched while the first plays rather than once it runs out.
+func TestPlaybackStartsShortAndPrefetches(t *testing.T) {
+	frames := fixtureMedia(t, "ip.h264", 5)
+	source, err := ParseURL("exacq://user:password@recorder/101?start=1700000000000&end=1700000030000&speed=1")
+	require.NoError(t, err)
+	session := &fakeMediaSession{batches: [][]*native.MediaPacket{frames}}
+	p := mockProducer(t, source, 5, session)
+	require.NoError(t, p.probe(context.Background()))
+	require.Eventually(t, func() bool { return len(session.searched()) == 2 }, time.Second, 5*time.Millisecond, "next window not prefetched")
+	requests := session.searched()
+	require.Equal(t, firstSearchSpan, requests[0][1].Sub(requests[0][0]))
+	require.Equal(t, requests[0][1], requests[1][0])
+	require.Equal(t, native.SearchSpan(5), requests[1][1].Sub(requests[1][0]))
 }
 
 func TestShortPlaybackStaysInsideItsEnd(t *testing.T) {

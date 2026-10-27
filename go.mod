@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/Eyevinn/mp4ff v0.56.0
-	github.com/Watchful-IP/ihub/servers/exacq v0.1.0
+	github.com/Watchful-IP/ihub/servers/exacq v0.2.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/expr-lang/expr v1.17.8
 	github.com/google/uuid v1.6.0
