@@ -68,7 +68,44 @@ func TestPictureQueueByteAndAgeLimits(t *testing.T) {
 		})
 	}
 }
-func TestPictureQueueDoesNotTreatCRAAsIndependent(t *testing.T) {
-	require.False(t, randomAccessPicture(CodecH265, []byte{0, 0, 0, 2, 42, 1}))
-	require.True(t, randomAccessPicture(CodecH265, []byte{0, 0, 0, 2, 38, 1}))
+func craSender(t *testing.T) *Sender {
+	codec := &Codec{Name: CodecH265, PayloadType: PayloadTypeRAW}
+	rtpCodec := codec.Clone()
+	rtpCodec.PayloadType = 96
+	s := NewSender(nil, rtpCodec).WithParent(NewReceiver(nil, codec))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestPictureQueueStartsOnCRAAndDropsItsLeadingPictures(t *testing.T) {
+	s := craSender(t)
+	cra := &Packet{Payload: []byte{0, 0, 0, 2, 21 << 1, 1}}
+	rasl := &Packet{Payload: []byte{0, 0, 0, 2, 9 << 1, 1}}
+	trail := &Packet{Payload: []byte{0, 0, 0, 2, 1 << 1, 1}}
+	s.Input(cra)
+	s.Input(rasl)
+	s.Input(trail)
+	s.Input(rasl) // after a trailing picture, RASL of a later CRA is decodable
+	require.Len(t, s.buf, 3)
+	require.Equal(t, 1, s.Drops)
+}
+
+func TestPictureQueueAgeIgnoresAnAlreadyDequeuedPicture(t *testing.T) {
+	s := craSender(t)
+	start := time.Now()
+	now := start
+	s.queueNow = func() time.Time { return now }
+	key := &Packet{Payload: []byte{0, 0, 0, 2, 0x26, 1}}
+	p := &Packet{Payload: []byte{0, 0, 0, 2, 2, 1}}
+	s.Input(key)
+	now = start.Add(1800 * time.Millisecond)
+	s.Input(p)
+	// The consumer takes the keyframe and is still writing it.
+	s.mu.Lock()
+	s.dequeued(<-s.buf)
+	s.mu.Unlock()
+	now = start.Add(2100 * time.Millisecond)
+	s.Input(p)
+	require.Len(t, s.buf, 2, "the queued picture has waited only 300 ms")
+	require.Zero(t, s.Drops)
 }

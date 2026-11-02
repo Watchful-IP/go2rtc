@@ -195,31 +195,34 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 			if m.timingClock != 0 && int32(timing.ClockID-m.timingID) < 0 {
 				return nil
 			}
-			m.timingBase = 0
+			var timingBase uint64
 			for i, end := range m.dts {
 				scaled, ok := rescaleTime(end, m.codecs[i].ClockRate, codec.ClockRate)
 				if !ok {
 					return nil
 				}
-				m.timingBase = max(m.timingBase, scaled)
+				timingBase = max(timingBase, scaled)
 			}
-			m.timingEpoch = timing.DecodeTime
-			m.timingClock = codec.ClockRate
-			m.timingID = timing.ClockID
+			// Validate before committing, so a rejected epoch leaves no timing state.
 			if timing.SourceTimeUnixNano != 0 {
+				sourceBase := m.sourceBase
 				if !m.sourceSet {
-					m.sourceBase = timing.SourceTimeUnixNano
-					m.sourceSet = true
+					sourceBase = timing.SourceTimeUnixNano
 				}
-				if timing.SourceTimeUnixNano < m.sourceBase {
+				if timing.SourceTimeUnixNano < sourceBase {
 					return nil
 				}
-				anchor, ok := rescaleTime(uint64(timing.SourceTimeUnixNano-m.sourceBase), 1000000000, codec.ClockRate)
+				anchor, ok := rescaleTime(uint64(timing.SourceTimeUnixNano-sourceBase), 1000000000, codec.ClockRate)
 				if !ok {
 					return nil
 				}
-				m.timingBase = anchor
+				timingBase = anchor
+				m.sourceBase, m.sourceSet = sourceBase, true
 			}
+			m.timingBase = timingBase
+			m.timingEpoch = timing.DecodeTime
+			m.timingClock = codec.ClockRate
+			m.timingID = timing.ClockID
 		}
 		epoch, ok := rescaleTime(m.timingEpoch, m.timingClock, codec.ClockRate)
 		if !ok || timing.DecodeTime < epoch {

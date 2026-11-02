@@ -92,7 +92,8 @@ type Sender struct {
 	parentDone   <-chan struct{}
 	pictureCodec string
 	queueBytes   int
-	queueOldest  time.Time
+	queueTimes   []time.Time
+	skipRASL     bool
 	queueNow     func() time.Time
 	waitKey      bool
 }
@@ -184,8 +185,7 @@ func (s *Sender) Start() {
 		for item := range buf {
 			if s.pictureCodec != "" {
 				s.mu.Lock()
-				s.queueBytes -= len(item.Packet.Payload)
-				s.queueOldest = item.At
+				s.dequeued(item)
 				now := time.Now()
 				if s.queueNow != nil {
 					now = s.queueNow()

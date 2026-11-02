@@ -72,6 +72,30 @@ func TestMuxerReconnectPreservesTimeline(t *testing.T) {
 	}
 }
 
+func TestMuxerRejectedBackwardsEpochLeavesNoTimingBase(t *testing.T) {
+	m := &Muxer{}
+	m.AddTrack(&core.Codec{Name: core.CodecAAC, ClockRate: 48000, Channels: 1, FmtpLine: "config=1188"})
+	init, err := m.GetInit()
+	require.NoError(t, err)
+	d := &Demuxer{}
+	_, err = d.Probe(init)
+	require.NoError(t, err)
+	sample := func(id uint32, ts uint64, sourceSec int64) []byte {
+		p := &rtp.Packet{Payload: []byte{1, 2}}
+		core.SetSampleTiming(p, core.SampleTiming{ClockID: id, DecodeTime: ts, Duration: 48000, SourceTimeUnixNano: sourceSec * 1e9})
+		return m.GetPayload(0, p)
+	}
+	out := sample(1, 0, 100)
+	// A restarted source whose clock went backwards is rejected, every packet.
+	require.Empty(t, sample(2, 0, 90))
+	require.Empty(t, sample(2, 48000, 91))
+	out = append(out, sample(3, 0, 102)...)
+	samples, err := d.Demux(out)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+	require.Equal(t, uint64(2*48000), samples[1].DecodeTime)
+}
+
 func TestInternalTimingDoesNotEscapeRTPPayloaders(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

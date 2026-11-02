@@ -15,26 +15,31 @@ type queuedPacket struct {
 	At     time.Time
 }
 
-func randomAccessPicture(codec string, b []byte) bool {
+// pictureKind reports whether a picture can start decoding (IDR/BLA/CRA, or
+// H264 IDR) and whether it is an HEVC RASL picture, which a CRA start cannot decode.
+func pictureKind(codec string, b []byte) (randomAccess, cra, rasl bool) {
 	for len(b) >= 4 {
 		n := int(binary.BigEndian.Uint32(b))
 		b = b[4:]
 		if n < 1 || n > len(b) {
-			return false
+			return false, false, false
 		}
 		if codec == CodecH264 && b[0]&31 == 5 {
-			return true
+			return true, false, false
 		}
-		// Only IDR/BLA are independent of preceding pictures. CRA may have RASL.
 		if codec == CodecH265 && n >= 2 {
-			typ := b[0] >> 1 & 63
-			if typ >= 16 && typ <= 20 {
-				return true
+			switch typ := b[0] >> 1 & 63; {
+			case typ >= 16 && typ <= 21:
+				return true, typ == 21, false
+			case typ == 8 || typ == 9:
+				return false, false, true
+			case typ < 32:
+				return false, false, false // first VCL NAL decides
 			}
 		}
 		b = b[n:]
 	}
-	return false
+	return false, false, false
 }
 
 func (s *Sender) discardPictures() {
@@ -45,11 +50,19 @@ func (s *Sender) discardPictures() {
 			if !ok {
 				return
 			}
-			s.queueBytes -= len(item.Packet.Payload)
+			s.dequeued(item)
 			s.Drops++
 		default:
 			return
 		}
+	}
+}
+
+// dequeued releases an item's accounting; queueTimes mirrors the channel's FIFO order.
+func (s *Sender) dequeued(item queuedPacket) {
+	s.queueBytes -= len(item.Packet.Payload)
+	if len(s.queueTimes) > 0 {
+		s.queueTimes = s.queueTimes[1:]
 	}
 }
 
@@ -58,24 +71,24 @@ func (s *Sender) enqueuePicture(packet *Packet) {
 	if s.queueNow != nil {
 		now = s.queueNow()
 	}
-	// Track the oldest queued arrival without taking data from the channel.
-	// After a dequeue, oldest may be older than reality: this is conservative.
-	if len(s.buf) == 0 {
-		s.queueOldest = now
-	}
-	if len(s.buf) == cap(s.buf) || s.queueBytes+len(packet.Payload) > pictureQueueMaxBytes || now.Sub(s.queueOldest) > pictureQueueMaxAge {
+	if len(s.buf) == cap(s.buf) || s.queueBytes+len(packet.Payload) > pictureQueueMaxBytes ||
+		len(s.queueTimes) > 0 && now.Sub(s.queueTimes[0]) > pictureQueueMaxAge {
 		s.discardPictures()
 	}
-	key := randomAccessPicture(s.pictureCodec, packet.Payload)
-	if len(packet.Payload) > pictureQueueMaxBytes || s.waitKey && !key {
+	key, cra, rasl := pictureKind(s.pictureCodec, packet.Payload)
+	if len(packet.Payload) > pictureQueueMaxBytes || s.waitKey && !key || s.skipRASL && rasl {
 		s.Drops++
 		return
 	}
 	if s.waitKey {
 		s.waitKey = false
-		s.queueOldest = now
+		// Leading pictures after a CRA start reference pictures we never sent.
+		s.skipRASL = cra
+	} else if s.skipRASL && !rasl {
+		s.skipRASL = false
 	}
 	s.queueBytes += len(packet.Payload)
+	s.queueTimes = append(s.queueTimes, now)
 	s.buf <- queuedPacket{packet, now}
 	s.Bytes += len(packet.Payload)
 	s.Packets++
