@@ -93,3 +93,28 @@ Session: 1
 	require.Nil(t, err)
 	require.Equal(t, ch, byte(4))
 }
+
+func TestWrongResponseKeepsStatus(t *testing.T) {
+	Timeout = time.Second
+
+	ln, err := net.Listen("tcp", "localhost:0")
+	require.Nil(t, err)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		b := make([]byte, 8192)
+		_, _ = conn.Read(b)
+		_, _ = conn.Write([]byte("RTSP/1.0 404 Not Found\r\nCSeq: 1\r\n\r\n"))
+	}()
+
+	client := NewClient("rtsp://" + ln.Addr().String() + "/cam/playback")
+
+	err = client.Dial()
+	require.Nil(t, err)
+
+	err = client.Describe()
+	require.EqualError(t, err, "wrong response on DESCRIBE: 404 Not Found")
+}

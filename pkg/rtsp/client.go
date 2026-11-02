@@ -137,7 +137,8 @@ func (c *Conn) Do(req *tcp.Request) (*tcp.Response, error) {
 		}
 	}
 
-	return res, fmt.Errorf("wrong response on %s", req.Method)
+	// Keep the camera's status: "404 Not Found" and "453 Not Enough Bandwidth" need different answers.
+	return res, fmt.Errorf("wrong response on %s: %s", req.Method, res.Status)
 }
 
 func (c *Conn) Options() error {
