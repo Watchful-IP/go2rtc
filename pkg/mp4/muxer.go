@@ -16,6 +16,8 @@ type Muxer struct {
 	dts         []uint64
 	pts         []uint32
 	codecs      []*core.Codec
+	sourceBase  int64
+	sourceSet   bool
 	timingEpoch uint64
 	timingClock uint32
 	timingID    uint32
@@ -133,6 +135,7 @@ func (m *Muxer) GetInit() ([]byte, error) {
 func (m *Muxer) Reset() {
 	m.index = 0
 	m.timingClock = 0
+	m.sourceSet = false
 	for i := range m.dts {
 		m.dts[i] = 0
 		m.pts[i] = 0
@@ -185,7 +188,8 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 	decodeTime := m.dts[trackID]
 	composition := uint32(packet.ExtensionProfile)
 	if timed {
-		if m.timingClock == 0 || timing.ClockID != m.timingID {
+		newEpoch := m.timingClock == 0 || timing.ClockID != m.timingID
+		if newEpoch {
 			// Source IDs are monotonic modulo uint32. Ignore queued packets from
 			// a retired source after a reconnect, without retaining an ID history.
 			if m.timingClock != 0 && int32(timing.ClockID-m.timingID) < 0 {
@@ -202,6 +206,20 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 			m.timingEpoch = timing.DecodeTime
 			m.timingClock = codec.ClockRate
 			m.timingID = timing.ClockID
+			if timing.SourceTimeUnixNano != 0 {
+				if !m.sourceSet {
+					m.sourceBase = timing.SourceTimeUnixNano
+					m.sourceSet = true
+				}
+				if timing.SourceTimeUnixNano < m.sourceBase {
+					return nil
+				}
+				anchor, ok := rescaleTime(uint64(timing.SourceTimeUnixNano-m.sourceBase), 1000000000, codec.ClockRate)
+				if !ok {
+					return nil
+				}
+				m.timingBase = anchor
+			}
 		}
 		epoch, ok := rescaleTime(m.timingEpoch, m.timingClock, codec.ClockRate)
 		if !ok || timing.DecodeTime < epoch {
@@ -212,10 +230,17 @@ func (m *Muxer) GetPayload(trackID byte, packet *rtp.Packet) []byte {
 			return nil
 		}
 		decodeTime = base + timing.DecodeTime - epoch
-		if decodeTime < m.dts[trackID] {
-			return nil
-		}
 		duration = timing.Duration
+		if decodeTime < m.dts[trackID] {
+			overlap := m.dts[trackID] - decodeTime
+			// A reconstructed cached-prefix keyframe has only an approximate start.
+			// Trim its overlapping presentation interval, never shift the epoch base.
+			if !newEpoch || flags != iso.SampleVideoIFrame || overlap > uint64(timing.SourceTimeUncertainty) || overlap >= uint64(duration) {
+				return nil
+			}
+			decodeTime += overlap
+			duration -= uint32(overlap)
+		}
 		composition = timing.CompositionOffset
 	}
 	size := len(packet.Payload)

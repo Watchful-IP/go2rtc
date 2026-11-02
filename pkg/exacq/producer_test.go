@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,7 +161,7 @@ func TestProducerLiveStartsFromBufferedGOP(t *testing.T) {
 				output = append(output, timing)
 			}
 			require.ErrorIs(t, p.Start(), io.EOF, "a live session ending is a failure, not a clean end")
-			require.Len(t, output, 29, "the buffered GOP is emitted, not discarded; the last picture awaits a successor")
+			require.Len(t, output, 30, "the final valid picture drains on disconnect")
 			for i := 1; i < len(output); i++ {
 				require.Equal(t, output[i-1].DecodeTime+uint64(output[i-1].Duration), output[i].DecodeTime, "contiguous at %d", i)
 			}
@@ -190,12 +191,15 @@ func TestProducerLiveDiscontinuousBufferWaitsForKeyframe(t *testing.T) {
 			var output []*core.Packet
 			p.video.Input = func(packet *core.Packet) { output = append(output, packet) }
 			require.ErrorIs(t, p.Start(), io.EOF, "a live session ending is a failure, not a clean end")
-			require.Len(t, output, 14, "each picture is released when its successor arrives")
+			require.Len(t, output, 15, "the final valid picture drains on disconnect")
 			for i, packet := range output {
 				timing, ok := core.GetSampleTiming(packet)
 				require.True(t, ok)
-				delta := frames[i+16].Timestamp().Sub(frames[i+15].Timestamp())
-				require.Equal(t, uint32(delta.Milliseconds()*90), timing.Duration)
+				delta := p.nominalInterval()
+				if i+16 < len(frames) {
+					delta = frames[i+16].Timestamp().Sub(frames[i+15].Timestamp())
+				}
+				require.Equal(t, uint32(math.Round(delta.Seconds()*90000)), timing.Duration)
 				require.Zero(t, timing.CompositionOffset)
 				if i > 0 {
 					previous, _ := core.GetSampleTiming(output[i-1])

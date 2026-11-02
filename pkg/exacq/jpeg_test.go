@@ -50,7 +50,7 @@ func TestProducerLiveJPEGPassesFramesThrough(t *testing.T) {
 		timings = append(timings, timing)
 	}
 	require.ErrorIs(t, p.Start(), io.EOF, "a live session ending is a failure")
-	require.Len(t, payloads, 5, "each JPEG is emitted whole; the last awaits its successor's timestamp")
+	require.Len(t, payloads, 6, "the final valid JPEG drains with nominal duration on disconnect")
 	for i, payload := range payloads {
 		require.Equal(t, frames[i].Data, payload)
 	}

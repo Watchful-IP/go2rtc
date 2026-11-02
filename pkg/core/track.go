@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 )
@@ -83,12 +84,17 @@ type Sender struct {
 	Packets int `json:"packets,omitempty"`
 	Drops   int `json:"drops,omitempty"`
 
-	buf        chan *Packet
-	done       chan struct{}
-	cancelled  chan struct{}
-	cancelOnce sync.Once
-	lossless   bool
-	parentDone <-chan struct{}
+	buf          chan queuedPacket
+	done         chan struct{}
+	cancelled    chan struct{}
+	cancelOnce   sync.Once
+	lossless     bool
+	parentDone   <-chan struct{}
+	pictureCodec string
+	queueBytes   int
+	queueOldest  time.Time
+	queueNow     func() time.Time
+	waitKey      bool
 }
 
 func NewSender(media *Media, codec *Codec) *Sender {
@@ -106,7 +112,7 @@ func NewSender(media *Media, codec *Codec) *Sender {
 		bufSize = 128
 	}
 
-	buf := make(chan *Packet, bufSize)
+	buf := make(chan queuedPacket, bufSize)
 	s := &Sender{
 		Node:      Node{id: NewID(), Codec: codec},
 		Media:     media,
@@ -117,15 +123,17 @@ func NewSender(media *Media, codec *Codec) *Sender {
 		s.mu.Lock()
 		if s.lossless {
 			select {
-			case s.buf <- packet:
+			case s.buf <- queuedPacket{Packet: packet}:
 				s.Bytes += len(packet.Payload)
 				s.Packets++
 			case <-s.cancelled:
 			case <-s.parentDone:
 			}
+		} else if s.pictureCodec != "" && s.buf != nil {
+			s.enqueuePicture(packet)
 		} else {
 			select {
-			case s.buf <- packet:
+			case s.buf <- queuedPacket{Packet: packet}:
 				s.Bytes += len(packet.Payload)
 				s.Packets++
 			default:
@@ -153,6 +161,10 @@ func (s *Sender) Bind(parent *Receiver) {
 
 func (s *Sender) WithParent(parent *Receiver) *Sender {
 	s.lossless = parent.Lossless
+	if !s.lossless && !parent.Codec.IsRTP() && (parent.Codec.Name == CodecH264 || parent.Codec.Name == CodecH265) {
+		s.pictureCodec = parent.Codec.Name
+		s.waitKey = true
+	}
 	s.parentDone = parent.Done()
 	s.Node.WithParent(&parent.Node)
 	return s
@@ -168,9 +180,25 @@ func (s *Sender) Start() {
 	s.done = make(chan struct{})
 
 	// pass buf directly so that it's impossible for buf to be nil
-	go func(buf chan *Packet) {
-		for packet := range buf {
-			s.Output(packet)
+	go func(buf chan queuedPacket) {
+		for item := range buf {
+			if s.pictureCodec != "" {
+				s.mu.Lock()
+				s.queueBytes -= len(item.Packet.Payload)
+				s.queueOldest = item.At
+				now := time.Now()
+				if s.queueNow != nil {
+					now = s.queueNow()
+				}
+				if now.Sub(item.At) > pictureQueueMaxAge {
+					s.Drops++
+					s.discardPictures()
+					s.mu.Unlock()
+					continue
+				}
+				s.mu.Unlock()
+			}
+			s.Output(item.Packet)
 		}
 		close(s.done)
 	}(s.buf)

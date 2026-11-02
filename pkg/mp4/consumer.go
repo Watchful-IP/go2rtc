@@ -215,15 +215,24 @@ func (c *Consumer) writePacket(trackID byte, packet *rtp.Packet, video, keyframe
 		}
 		c.start = true
 	}
-	c.writeSample(trackID, packet)
+	if !c.writeSample(trackID, packet) {
+		if video {
+			c.start = false
+		}
+		return
+	}
 	c.flushPending()
 }
 
-func (c *Consumer) writeSample(trackID byte, packet *rtp.Packet) {
+func (c *Consumer) writeSample(trackID byte, packet *rtp.Packet) bool {
 	b := c.muxer.GetPayload(trackID, packet)
+	if len(b) == 0 {
+		return false
+	}
 	if n, err := c.wr.Write(b); err == nil {
 		c.Send += n
 	}
+	return true
 }
 
 func (c *Consumer) flushPending() {

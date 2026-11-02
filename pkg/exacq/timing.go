@@ -45,7 +45,16 @@ func (p *Producer) emit(f *frame, duration time.Duration) error {
 	}
 	p.seq++
 	packet := &core.Packet{Header: rtp.Header{Timestamp: uint32(uint64(pts)), SequenceNumber: p.seq, Marker: true}, Payload: f.Data}
-	core.SetSampleTiming(packet, core.SampleTiming{ClockID: p.clockID, DecodeTime: uint64(dts), Duration: uint32(max(1, dur)), CompositionOffset: uint32(cts)})
+	var uncertainty uint32
+	if f.Backdated {
+		uncertainty = uint32(math.Ceil(p.nominalInterval().Seconds() * 90000))
+	}
+	var sourceTime int64
+	if !p.source.Playback {
+		sourceTime = f.time.UnixNano()
+		p.sourceTime.Store(f.VideoFrame.Time.UnixNano())
+	}
+	core.SetSampleTiming(packet, core.SampleTiming{SourceTimeUncertainty: uncertainty, SourceTimeUnixNano: sourceTime, ClockID: p.clockID, DecodeTime: uint64(dts), Duration: uint32(max(1, dur)), CompositionOffset: uint32(cts)})
 	p.video.Input(packet)
 	return nil
 }

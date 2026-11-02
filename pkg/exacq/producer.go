@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"math"
 	"sync/atomic"
@@ -119,24 +120,27 @@ type Producer struct {
 	// can start before the requested range to retain necessary GOP preroll.
 	ActualStart time.Time `json:"actual_start"`
 
-	source    *Source
-	client    native.MediaSession
-	stream    native.Stream
-	video     *core.Receiver
-	state     native.VideoAssembler
-	assembled bool // the assembler has produced a decodable picture
-	timeline  *timeline
-	start     native.LiveStart
-	queued    []*frame // live pictures released by start, decode order
-	ready     []*frame
-	ended     bool
-	ctx       context.Context
-	cancel    context.CancelFunc
-	started   atomic.Bool
-	clockID   uint32
-	seq       uint16
-	lastKey   time.Time
-	last      time.Time
+	source           *Source
+	client           native.MediaSession
+	stream           native.Stream
+	video            *core.Receiver
+	state            native.VideoAssembler
+	assembled        bool // the assembler has produced a decodable picture
+	timeline         *timeline
+	start            native.LiveStart
+	queued           []*frame // live pictures released by start, decode order
+	ready            []*frame
+	ended            bool
+	terminalErr      error
+	terminalBoundary time.Time
+	sourceTime       atomic.Int64
+	ctx              context.Context
+	cancel           context.CancelFunc
+	started          atomic.Bool
+	clockID          uint32
+	seq              uint16
+	lastKey          time.Time
+	last             time.Time
 
 	onVideo func() // called once, on the live stream's first packet
 
@@ -269,6 +273,9 @@ func (p *Producer) Start() (err error) {
 // timed returns the next picture with its output timing.
 func (p *Producer) timed(ctx context.Context) (*frame, error) {
 	for len(p.ready) == 0 {
+		if p.terminalErr != nil {
+			return nil, p.terminalErr
+		}
 		if p.ended {
 			return nil, errPlaybackEnd
 		}
@@ -279,6 +286,11 @@ func (p *Producer) timed(ctx context.Context) (*frame, error) {
 			continue
 		}
 		if err != nil {
+			if !p.source.Playback && ctx.Err() == nil {
+				p.terminalErr = err
+				p.ready = p.timeline.flush(p.nominalInterval(), p.terminalBoundary)
+				continue
+			}
 			return nil, err
 		}
 		p.ready = p.timeline.push(f)
@@ -325,6 +337,11 @@ func (p *Producer) next(ctx context.Context) (*frame, error) {
 		}
 		p.Recv += len(packet.Data)
 		v, err := p.state.Prepare(packet)
+		if err != nil && p.timeline != nil && !p.timeline.bFrames && packet.Timestamp().After(p.timeline.latest) {
+			// Even a rejected new keyframe can bound the preceding valid picture.
+			// Never use its payload or a backwards/unset timestamp.
+			p.terminalBoundary = packet.Timestamp()
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -506,4 +523,20 @@ func playbackStartIndex(frames []*native.MediaPacket, start time.Time) int {
 		}
 	}
 	return -1
+}
+
+// MarshalJSON exposes current source age even while no new frames arrive.
+func (p *Producer) MarshalJSON() ([]byte, error) {
+	type alias Producer
+	stamp := p.sourceTime.Load()
+	var age int64
+	if stamp != 0 {
+		age = time.Since(time.Unix(0, stamp)).Milliseconds()
+	}
+	return json.Marshal(struct {
+		*alias
+		SourceTime int64  `json:"source_time_unix_ns,omitempty"`
+		FrameAge   int64  `json:"frame_age_ms"`
+		Epoch      uint32 `json:"clock_epoch"`
+	}{(*alias)(p), stamp, age, p.clockID})
 }
