@@ -3,6 +3,9 @@
 # 0. Prepare images
 ARG PYTHON_VERSION="3.13"
 ARG GO_VERSION="1.27"
+# Same static FFmpeg build as the ihub images. Alpine's package lags upstream.
+ARG FFMPEG_IMAGE=mwader/static-ffmpeg:9.0.2-1
+FROM ${FFMPEG_IMAGE} AS ffmpeg
 
 
 # 1. Build go2rtc binary
@@ -38,11 +41,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldfl
 # 2. Final image
 FROM python:${PYTHON_VERSION}-alpine AS base
 
-# Install ffmpeg, tini (for signal handling),
+# Install tini (for signal handling),
 # and other common tools for the echo source.
 # alsa-plugins-pulse for ALSA support (+0MB)
 # font-droid for FFmpeg drawtext filter (+2MB)
-RUN apk add --no-cache tini ffmpeg ffplay bash curl jq alsa-plugins-pulse font-droid
+RUN apk add --no-cache tini bash curl jq alsa-plugins-pulse font-droid
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/bin/
 
 # Hardware Acceleration for Intel CPU (+50MB)
 ARG TARGETARCH
