@@ -38,11 +38,17 @@ jobs:
         with: { go-version: '1.27', cache: false }
 
       - name: Install media validation tools
+        # The image's FFmpeg, not Ubuntu's older package.
         run: |
-          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || {
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg
-          }
+          image=$(sed -n 's/^ARG FFMPEG_IMAGE=//p' docker/Dockerfile | head -1)
+          dir="$RUNNER_TEMP/ffmpeg/bin"
+          mkdir -p "$dir"
+          container=$(docker create "$image")
+          docker cp "$container:/ffmpeg" "$dir/ffmpeg"
+          docker cp "$container:/ffprobe" "$dir/ffprobe"
+          docker rm "$container" >/dev/null
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/ffmpeg" -version | head -1
 
       - name: Build
         run: go build -ldflags "-s -w" -trimpath
