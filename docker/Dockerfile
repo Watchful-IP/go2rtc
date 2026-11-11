@@ -4,6 +4,8 @@
 ARG PYTHON_VERSION="3.13"
 ARG GO_VERSION="1.27"
 # Same static FFmpeg build as the ihub images. Alpine's package lags upstream.
+# It has no VAAPI, ALSA or ffplay: Watchful only runs ffmpeg:<src> remux sources
+# on GKE, which has no GPU or audio devices.
 ARG FFMPEG_IMAGE=mwader/static-ffmpeg:9.0.2-1
 FROM ${FFMPEG_IMAGE} AS ffmpeg
 
