@@ -41,50 +41,62 @@ func parseFrames(b []byte, frames []frame) ([]frame, error) {
 	if len(b) >= 2 && b[0] == 0xFF && b[1] == 0xD8 {
 		return append(frames, frame{codec: codecJPEG, key: true, data: b}), nil
 	}
+	err := walkPackets(b, func(dataType uint16, p []byte) error {
+		if dataType != gbdVideoPacket {
+			return nil
+		}
+		if len(p) < videoHeaderSize {
+			return errDesync
+		}
+		frames = append(frames, frame{
+			codec: binary.BigEndian.Uint16(p[6:]),
+			key:   binary.BigEndian.Uint16(p[10:])&flagSync != 0,
+			sync:  int64(binary.BigEndian.Uint64(p[12:])),
+			time:  int64(binary.BigEndian.Uint64(p[20:])),
+			data:  p[videoHeaderSize:],
+		})
+		return nil
+	})
+	return frames, err
+}
+
+// walkPackets calls fn for each GenericByteData packet in a part.
+func walkPackets(b []byte, fn func(dataType uint16, p []byte) error) error {
 	for len(b) > 0 {
 		if len(b) < 6 {
-			return frames, errDesync
+			return errDesync
 		}
 		dataType := binary.BigEndian.Uint16(b)
 		switch {
 		case dataType == gbdMultiPacket:
 			// Wraps one video and one audio packet; the inner packets follow.
 			if len(b) < multiHeaderSize {
-				return frames, errDesync
+				return errDesync
 			}
 			b = b[multiHeaderSize:]
 			continue
 		case dataType >= 0x0001 && dataType <= 0x000F:
-			return frames, errVideoBlock
+			return errVideoBlock
 		}
 
 		size := int(binary.BigEndian.Uint32(b[2:]))
 		if size > len(b) {
-			return frames, errDesync
+			return errDesync
 		}
 		switch dataType {
-		case gbdVideoPacket:
-			if size < videoHeaderSize {
-				return frames, errDesync
-			}
-			frames = append(frames, frame{
-				codec: binary.BigEndian.Uint16(b[6:]),
-				key:   binary.BigEndian.Uint16(b[10:])&flagSync != 0,
-				sync:  int64(binary.BigEndian.Uint64(b[12:])),
-				time:  int64(binary.BigEndian.Uint64(b[20:])),
-				data:  b[videoHeaderSize:size],
-			})
-		case gbdAudioPacket, gbdMetadata:
-			// Audio is a separate device in XProtect; metadata is not video.
+		case gbdVideoPacket, gbdAudioPacket, gbdMetadata:
 		default:
-			return frames, fmt.Errorf("milestone: unknown GenericByteData type 0x%04X", dataType)
+			return fmt.Errorf("milestone: unknown GenericByteData type 0x%04X", dataType)
 		}
 		if size == 0 {
-			return frames, errDesync
+			return errDesync
+		}
+		if err := fn(dataType, b[:size]); err != nil {
+			return err
 		}
 		b = b[size:]
 	}
-	return frames, nil
+	return nil
 }
 
 func codecName(id uint16) string {

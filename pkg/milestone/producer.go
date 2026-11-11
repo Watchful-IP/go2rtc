@@ -3,6 +3,7 @@ package milestone
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -124,6 +125,12 @@ type Live struct {
 	bFrames  bool
 	reorder  *reorderer
 	firstGOP []frame
+
+	audio        *liveAudio
+	last         *frame        // with audio, video waits for the next picture's time
+	videoStarted chan struct{} // closed at the first video picture
+	done         chan struct{} // closed when the stream ends
+	endOnce      sync.Once
 }
 
 type heldPicture struct {
@@ -138,17 +145,35 @@ const (
 	maxHold       = 2 * time.Second
 )
 
+// noAudioTimeout bounds how long a ready video waits for its microphone.
+var noAudioTimeout = 2 * time.Second
+
+type audioResult struct {
+	audio *liveAudio
+	err   error
+}
+
 func dialLive(src *Source) (*Live, error) {
+	var mic chan audioResult
+	if src.Mic != "" {
+		mic = make(chan audioResult, 1)
+		go func() {
+			a, err := dialAudio(src)
+			mic <- audioResult{a, err}
+		}()
+	}
 	jpeg := src.JPEG
 	for {
 		client, err := dialClient(src, jpeg)
 		if err != nil {
+			closeAudio(mic)
 			return nil, err
 		}
-		l := &Live{}
+		l := &Live{videoStarted: make(chan struct{}), done: make(chan struct{})}
 		l.init(src, client, "milestone")
 		err = l.probe()
 		if err == nil {
+			l.attachAudio(mic)
 			return l, nil
 		}
 		_ = client.Close()
@@ -156,8 +181,42 @@ func dialLive(src *Source) (*Live, error) {
 			jpeg = true // the recorder transcodes what browsers cannot decode
 			continue
 		}
+		closeAudio(mic)
 		return nil, err
 	}
+}
+
+// attachAudio adds the microphone track; a missing microphone leaves video only.
+func (l *Live) attachAudio(mic chan audioResult) {
+	if mic == nil {
+		return
+	}
+	select {
+	case r := <-mic:
+		if r.err != nil {
+			return
+		}
+		l.audio = r.audio
+	case <-time.After(noAudioTimeout):
+		closeAudio(mic)
+		return
+	}
+	media := &core.Media{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{l.audio.codec}}
+	l.audio.recv = core.NewReceiver(media, l.audio.codec)
+	l.Medias = append(l.Medias, media)
+	l.Receivers = append(l.Receivers, l.audio.recv)
+}
+
+// closeAudio closes the microphone connection once its dial finishes.
+func closeAudio(mic chan audioResult) {
+	if mic == nil {
+		return
+	}
+	go func() {
+		if r := <-mic; r.audio != nil {
+			_ = r.audio.client.Close()
+		}
+	}()
 }
 
 // probe waits for the first keyframe, which defines the track.
@@ -204,6 +263,10 @@ func (l *Live) probe() error {
 var errCameraOffline = errors.New("milestone: camera is not connected to the recording server")
 
 func (l *Live) Start() error {
+	defer l.end()
+	if l.audio != nil {
+		go l.audio.run(l)
+	}
 	for _, f := range l.firstGOP {
 		if err := l.handle(f); err != nil {
 			return err
@@ -241,7 +304,7 @@ func (l *Live) handle(f frame) error {
 	l.Recv += len(f.data)
 	f.data = l.payload(&f)
 	if l.codec == codecJPEG {
-		l.video.Input(&core.Packet{Header: rtp.Header{Timestamp: l.ticks(f.time)}, Payload: f.data})
+		l.input(&core.Packet{Header: rtp.Header{Timestamp: l.ticks(f.time)}, Payload: f.data})
 		return nil
 	}
 
@@ -275,12 +338,20 @@ func (l *Live) handle(f frame) error {
 func (l *Live) emit(f frame, pic picture) {
 	if l.reorder == nil {
 		if !l.bFrames || !f.key {
+			if l.audio != nil {
+				l.emitHeld(&f)
+				return
+			}
 			// No B-frames: recorder arrival times are presentation times. B-frames
 			// that first appear mid-GOP are reordered from the next keyframe.
-			l.video.Input(&core.Packet{Header: rtp.Header{Timestamp: l.ticks(f.time)}, Payload: f.data})
+			l.input(&core.Packet{Header: rtp.Header{Timestamp: l.ticks(f.time)}, Payload: f.data})
 			return
 		}
 		l.reorder = newReorderer(reorderWindow)
+		if l.last != nil {
+			l.emitHeld(&f)
+			l.last = nil
+		}
 	}
 	interval := l.interval()
 	if interval == 0 {
@@ -317,5 +388,38 @@ func (l *Live) writeTimed(t timedFrame) {
 		Duration:          uint32(t.duration * clockRate),
 		CompositionOffset: uint32((t.pts - t.dts) * clockRate),
 	})
+	l.input(packet)
+}
+
+// emitHeld writes the held picture, ending where f starts.
+func (l *Live) emitHeld(f *frame) {
+	if h := l.last; h != nil {
+		t := float64(h.time - l.base)
+		l.writeTimed(timedFrame{frame: *h, dts: t, pts: t, duration: max(float64(f.time-h.time), 1)})
+	}
+	l.last = f
+}
+
+func (l *Live) input(packet *core.Packet) {
 	l.video.Input(packet)
+	select {
+	case <-l.videoStarted:
+	default:
+		close(l.videoStarted)
+	}
+}
+
+func (l *Live) Stop() error {
+	l.end()
+	return l.Connection.Stop()
+}
+
+// end releases the microphone; Start and Stop both call it.
+func (l *Live) end() {
+	l.endOnce.Do(func() {
+		close(l.done)
+		if l.audio != nil {
+			_ = l.audio.client.Close()
+		}
+	})
 }

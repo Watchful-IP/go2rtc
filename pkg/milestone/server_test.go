@@ -13,7 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testCamera = "5193ca41-6223-4186-809d-668a6edc9da7"
+const (
+	testCamera = "5193ca41-6223-4186-809d-668a6edc9da7"
+	testMic    = "0ded2618-ea69-4657-80ec-4fb3a99be236"
+)
 
 // fakeRecorder replays ImageServer responses captured from an XProtect
 // 2025 R3 recording server (testdata/*.bin, synthetic clock footage).
@@ -27,6 +30,9 @@ type fakeRecorder struct {
 	jpegLive []byte   // used when the client asks for recorder-side JPEG
 	jpegGOPs [][]byte
 	holdOpen bool // keep the live connection open after the fixture
+
+	mic        []byte // written after live on a connection to testMic
+	micConnect string // connect reply for testMic; empty accepts
 
 	mu       sync.Mutex
 	requests []string // "method" or "method jpeg"
@@ -64,7 +70,7 @@ func (f *fakeRecorder) serve() {
 func (f *fakeRecorder) handle(conn net.Conn) {
 	defer conn.Close()
 	rd := bufio.NewReader(conn)
-	var jpeg bool
+	var jpeg, mic bool
 	gop := 0
 	for {
 		req, err := readRequest(rd)
@@ -74,9 +80,12 @@ func (f *fakeRecorder) handle(conn net.Conn) {
 		method := xmlValue(req, "methodname")
 		if method == "connect" {
 			jpeg = xmlValue(req, "alwaysstdjpeg") == "yes"
+			mic = xmlValue(req, "cameraid") == testMic
 		}
 		f.mu.Lock()
-		if jpeg {
+		if mic {
+			f.requests = append(f.requests, method+" mic")
+		} else if jpeg {
 			f.requests = append(f.requests, method+" jpeg")
 		} else {
 			f.requests = append(f.requests, method)
@@ -86,6 +95,9 @@ func (f *fakeRecorder) handle(conn net.Conn) {
 		switch method {
 		case "connect":
 			reply := f.connect
+			if mic {
+				reply = f.micConnect
+			}
 			if reply == "" {
 				reply = `<?xml version="1.0" encoding="UTF-8"?><methodresponse><requestid>1</requestid><methodname>connect</methodname><connected>yes</connected><errorreason>Success</errorreason></methodresponse>` + "\r\n\r\n"
 			}
@@ -94,6 +106,9 @@ func (f *fakeRecorder) handle(conn net.Conn) {
 			live := f.live
 			if jpeg {
 				live = f.jpegLive
+			}
+			if mic {
+				live = f.mic
 			}
 			_, _ = conn.Write(live)
 			if !f.holdOpen {
