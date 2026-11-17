@@ -16,7 +16,12 @@ permissions:
   id-token: write
 
 env:
-  IMAGE: us-docker.pkg.dev/watchful-global/watchful-docker-public/go2rtc
+  # Release tags (pushed, or rebuilt by dispatch with `ref`) go to the public repo,
+  # which deployment-config and docker-compose pull from and which is vulnerability
+  # scanned. Branch builds go to the unscanned watchful-docker-ci repo: nothing
+  # deploys them by name, and scanning bills every pushed digest (~$0.46 each,
+  # ~5 per multi-arch build).
+  IMAGE: ${{ (github.ref_type == 'tag' || inputs.ref != '') && 'us-docker.pkg.dev/watchful-global/watchful-docker-public/go2rtc' || 'us-docker.pkg.dev/watchful-global/watchful-docker-ci/go2rtc' }}
 
 jobs:
   docker:
