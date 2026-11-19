@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/tcp"
@@ -17,6 +18,16 @@ import (
 
 const rangeBlock = 256 << 10
 const maxSpool = 256 << 20
+
+// spoolShortfall is how far a body may end short of its Content-Length and still be spooled. UniFi OS
+// 6.0.17 announces 4096 bytes more than it sends for complete Protect exports; a file that really is cut
+// short loses its tail (moov, for a moov-at-end export) and fails to open anyway.
+const spoolShortfall = 64 << 10
+
+// A spool may run as long as the body keeps arriving: a large clip over a slow tunnel takes longer than
+// any fixed limit that still catches a stalled source quickly.
+var spoolIdle = 30 * time.Second
+var spoolLimit = 5 * time.Minute
 
 // fileHTTP reads bounded ranges, or spools a bounded response when ranges aren't advertised.
 // Requests use the final response URL and its headers, preserving redirect credential policy.
@@ -64,15 +75,34 @@ func newFileHTTP(res *http.Response) (*fileHTTP, error) {
 	}
 	r.file = f
 	// The temporary file stays private and is removed on every failure and Stop.
-	timer := time.AfterFunc(30*time.Second, func() { _ = res.Body.Close() })
-	n, err := io.Copy(f, io.LimitReader(res.Body, maxSpool+1))
-	timer.Stop()
-	if err != nil || n > maxSpool || (r.size >= 0 && n != r.size) {
+	var expired atomic.Bool
+	stop := func() { expired.Store(true); _ = res.Body.Close() }
+	idle := time.AfterFunc(spoolIdle, stop)
+	limit := time.AfterFunc(spoolLimit, stop)
+	n, err := io.Copy(f, io.LimitReader(&progressReader{r: res.Body, idle: idle}, maxSpool+1))
+	idle.Stop()
+	limit.Stop()
+	short := r.size > 0 && n < r.size && r.size-n <= spoolShortfall && errors.Is(err, io.ErrUnexpectedEOF) && !expired.Load()
+	if (err != nil && !short) || n > maxSpool || (r.size >= 0 && n != r.size && !short) {
 		r.Close()
 		return nil, errors.New("mp4: incomplete or oversized HTTP file")
 	}
 	r.size = n
 	return r, nil
+}
+
+// progressReader pushes the idle deadline back whenever the body delivers bytes.
+type progressReader struct {
+	r    io.Reader
+	idle *time.Timer
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.idle.Reset(spoolIdle)
+	}
+	return n, err
 }
 
 func (r *fileHTTP) ReadAt(p []byte, off int64) (int, error) {

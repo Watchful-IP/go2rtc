@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,5 +145,77 @@ func TestFiniteBufferBeforeWriter(t *testing.T) {
 		require.Equal(t, "last sample", out.String())
 	case <-time.After(time.Second):
 		t.Fatal("late writer hung")
+	}
+}
+
+func TestFileHTTPSpoolShortOfContentLength(t *testing.T) {
+	data := fixture(t, "progressive")
+	for _, tc := range []struct {
+		name  string
+		extra int
+		ok    bool
+	}{
+		{"unifi announces 4096 more than it sends", 4096, true},
+		{"cut further than the allowance", spoolShortfall + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "video/mp4")
+				w.Header().Set("Content-Length", strconv.Itoa(len(data)+tc.extra))
+				w.Write(data)
+			}))
+			defer server.Close()
+			res, err := http.Get(server.URL)
+			require.NoError(t, err)
+			p, err := OpenFileResponse(res)
+			if !tc.ok {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			defer p.Stop()
+			require.Equal(t, int64(len(data)), p.reader.(*fileHTTP).size)
+		})
+	}
+}
+
+func TestFileHTTPSpoolIdle(t *testing.T) {
+	defer func(idle, limit time.Duration) { spoolIdle, spoolLimit = idle, limit }(spoolIdle, spoolLimit)
+	spoolIdle, spoolLimit = 150*time.Millisecond, 5*time.Second
+	data := fixture(t, "progressive")
+	for _, tc := range []struct {
+		name  string
+		pause time.Duration
+		ok    bool
+	}{
+		{"slow but steady outlasts the idle limit", 60 * time.Millisecond, true},
+		{"a stalled body is dropped", 400 * time.Millisecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "video/mp4")
+				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+				chunk := (len(data) + 5) / 6
+				for i := 0; i < len(data); i += chunk {
+					w.Write(data[i:min(i+chunk, len(data))])
+					w.(http.Flusher).Flush()
+					select {
+					case <-time.After(tc.pause):
+					case <-r.Context().Done():
+						return
+					}
+				}
+			}))
+			defer server.Close()
+			res, err := http.Get(server.URL)
+			require.NoError(t, err)
+			p, err := OpenFileResponse(res)
+			if !tc.ok {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			defer p.Stop()
+		})
 	}
 }
