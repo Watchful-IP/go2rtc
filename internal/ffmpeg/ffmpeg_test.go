@@ -394,3 +394,53 @@ func TestVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestTLSVerify(t *testing.T) {
+	defer func(v string) { verAV = v }(verAV)
+	tests := []struct {
+		version string
+		source  string
+		expect  string
+	}{
+		{
+			version: "63.  1",
+			source:  "https://example.com",
+			expect:  `ffmpeg -hide_banner -tls_verify 0 -fflags nobuffer -flags low_delay -i https://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			version: "63.  1",
+			source:  "rtsps://example.com",
+			expect:  `ffmpeg -hide_banner -tls_verify 0 -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsps://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			// FFmpeg rejects the option on inputs without TLS
+			version: "63.  1",
+			source:  "http://example.com",
+			expect:  `ffmpeg -hide_banner -fflags nobuffer -flags low_delay -i http://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			version: "63.  1",
+			source:  "rtmp://example.com",
+			expect:  `ffmpeg -hide_banner -fflags nobuffer -flags low_delay -i rtmp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			// librtmp (in our static FFmpeg) handles rtmps and rejects the option
+			version: "63.  1",
+			source:  "rtmps://example.com",
+			expect:  `ffmpeg -hide_banner -i rtmps://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			// FFmpeg 8 doesn't verify certificates
+			version: "62.  3",
+			source:  "https://example.com",
+			expect:  `ffmpeg -hide_banner -fflags nobuffer -flags low_delay -i https://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.version+" "+test.source, func(t *testing.T) {
+			verAV = test.version
+			args := parseArgs(test.source)
+			require.Equal(t, test.expect, args.String())
+		})
+	}
+}

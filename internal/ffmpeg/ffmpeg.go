@@ -221,6 +221,17 @@ func parseArgs(s string) *ffmpeg.Args {
 		default:
 			args.Input = "-i " + s
 		}
+
+		// FFmpeg 9 verifies TLS certificates by default, which rejects the self-signed
+		// certificates most cameras use. go2rtc's own clients skip verification too.
+		// Only these inputs accept the option, anything else fails with "Option not found":
+		// plain http, and rtmps on builds with librtmp (which doesn't verify anyway).
+		switch s[:i] {
+		case "https", "rtsps":
+			if args.Version >= ffmpeg.Version90 {
+				args.Input = "-tls_verify 0 " + args.Input
+			}
+		}
 	} else if streams.Get(s) != nil {
 		s = "rtsp://127.0.0.1:" + rtsp.Port + "/" + s
 		switch {
