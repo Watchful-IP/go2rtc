@@ -101,12 +101,17 @@ func TestParseArgsIpCam(t *testing.T) {
 		{
 			name:   "[HLS] video will be copied, audio will be skipped",
 			source: "https://example.com#video=copy",
-			expect: `ffmpeg -hide_banner -fflags nobuffer -flags low_delay -i https://example.com -c:v copy -an -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+			expect: `ffmpeg -hide_banner -tls_verify 0 -fflags nobuffer -flags low_delay -i https://example.com -c:v copy -an -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
 		},
 		{
 			name:   "[RTSP] video will be copied without transcoding codecs",
 			source: "rtsp://example.com",
 			expect: `ffmpeg -hide_banner -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
+		},
+		{
+			name:   "[RTSPS] certificate is not verified",
+			source: "rtsps://example.com:322/stream",
+			expect: `ffmpeg -hide_banner -tls_verify 0 -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsps://example.com:322/stream -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}`,
 		},
 		{
 			name:   "[RTSP] video with resize to 1280x720, should be transcoded, so select H265",

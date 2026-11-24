@@ -221,6 +221,13 @@ func parseArgs(s string) *ffmpeg.Args {
 		default:
 			args.Input = "-i " + s
 		}
+		// FFmpeg 9 verifies TLS certificates by default; FFmpeg 8 did not. Cameras
+		// serve self-signed certificates, and sources tunnelled to 127.0.0.1 match no
+		// certificate, so verification would refuse them. Keep the FFmpeg 8 behaviour.
+		switch s[:i] {
+		case "https", "rtsps":
+			args.Input = "-tls_verify 0 " + args.Input
+		}
 	} else if streams.Get(s) != nil {
 		s = "rtsp://127.0.0.1:" + rtsp.Port + "/" + s
 		switch {
