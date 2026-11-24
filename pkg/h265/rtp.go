@@ -34,6 +34,11 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		if len(packet.Payload) >= 2 && isReservedType((packet.Payload[0]>>1)&0x3F) {
 			return
 		}
+		// Hikvision NVR playback wraps each keyframe in empty packets numbered from
+		// their own counter. They carry no data, so drop them before the step too.
+		if len(packet.Payload) == 0 {
+			return
+		}
 		lost := seen && (packet.SequenceNumber-seqNum != 1 || (fragmented && packet.Timestamp != timestamp))
 		if pending != nil {
 			// Some cameras mark a damaged picture complete just before an RTP gap.
