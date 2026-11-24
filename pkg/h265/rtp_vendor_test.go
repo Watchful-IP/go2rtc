@@ -79,3 +79,46 @@ func TestRTPDepayVendorPacketWithConservativeRecovery(t *testing.T) {
 		t.Fatalf("got %d access units, want 3", got)
 	}
 }
+
+// Hikvision NVR playback (ISAPI/Streaming/tracks, "HIK Media Server V4.50.000")
+// wraps every keyframe in empty RTP packets: two before the VPS and one after the
+// IDR, each with the marker set and numbered from a separate counter. Counting them
+// as loss held every following P-frame until the next keyframe, so recorded H.265
+// played back one picture per GOP.
+func TestRTPDepayHikvisionPlaybackEmptyPackets(t *testing.T) {
+	vps, sps, pps := []byte{64, 1, 12}, []byte{66, 1, 1}, []byte{68, 1, 192}
+	p := func(n byte) []byte { return []byte{2, 1, n} }
+	empty := func(seq uint16, ts uint32) *rtp.Packet { return lossPacket(seq, ts, true, nil) }
+	packets := []*rtp.Packet{
+		lossPacket(276, 1000, true, p(1)),
+		empty(3, 4000),
+		empty(4, 4000),
+		lossPacket(277, 4000, false, vps),
+		lossPacket(278, 4000, false, sps),
+		lossPacket(279, 4000, false, pps),
+		lossPacket(280, 4000, false, []byte{98, 1, 147, 175}), // FU start, IDR_N_LP
+		lossPacket(281, 4000, true, []byte{98, 1, 83, 176}),   // FU end
+		empty(5, 4000),
+		lossPacket(282, 10000, true, p(2)),
+		lossPacket(283, 16000, true, p(3)),
+	}
+	var got [][]byte
+	depay := RTPDepay(&core.Codec{}, func(p *rtp.Packet) { got = append(got, bytes.Clone(p.Payload)) })
+	for _, pkt := range packets {
+		depay(pkt)
+	}
+	want := [][]byte{
+		lossNALs(p(1)),
+		lossNALs(vps, sps, pps, []byte{38, 1, 175, 176}),
+		lossNALs(p(2)),
+		lossNALs(p(3)),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d access units %x, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if !bytes.Equal(got[i], want[i]) {
+			t.Fatalf("access unit %d: got %x, want %x", i, got[i], want[i])
+		}
+	}
+}
